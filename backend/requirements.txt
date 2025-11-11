@@ -1,0 +1,25 @@
+# --- Framework principal ---
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# --- Banco de dados ---
+sqlmodel==0.0.22
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+
+# --- Speech-to-Text / Whisper ---
+openai-whisper==20240930
+torch>=2.4.0
+torchaudio>=2.4.0
+
+# --- Manipulação e datas ---
+python-dateutil==2.9.0.post0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+
+# --- Uploads e tipos de arquivo ---
+python-multipart==0.0.9
+
+# --- Utilitários ---
+requests==2.32.3
+tqdm==4.66.5
