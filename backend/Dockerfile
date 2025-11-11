@@ -2,15 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalar dependências do sistema para PostgreSQL e áudio
+# Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
-    postgresql-client \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt .
+# Copiar requirements primeiro (cache mais eficiente)
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/app ./app
+# Copiar aplicação
+COPY app ./app
 
+# Expor porta
+EXPOSE 8000
+
+# Comando de inicialização
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
