@@ -8,10 +8,9 @@ export interface OnboardingData {
 
 interface OnboardingFlowProps {
   onComplete: (data: OnboardingData) => void;
-  userEmail: string;
 }
 
-const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, userEmail }) => {
+const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) => {
   const [currentStep, setCurrentStep] = useState(0);
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     userType: 'pessoal',
@@ -149,7 +148,7 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, userEmail }
             ))}
           </div>
           
-          {/* CORREÇÃO: Campo para adicionar nova categoria com botão */}
+          {/* Campo para adicionar nova categoria com botão */}
           <div className="flex items-center space-x-2">
             <input
               type="text"
@@ -192,8 +191,8 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, userEmail }
                     'Entretenimento', 'Vestuário', 'Serviços', 'Investimentos', 'Outros',
                     'Contas', 'Insumos', 'Salários', 'Manutenção', 'Despesas Extras'
                   ].includes(cat)
-                ).map((category, index) => (
-                  <div key={index} className="flex items-center space-x-1 bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
+                ).map((category) => (
+                  <div key={category} className="flex items-center space-x-1 bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
                     <span>{category}</span>
                     <button
                       onClick={() => {

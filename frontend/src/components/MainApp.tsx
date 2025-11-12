@@ -58,7 +58,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     loadUserData();
   }, []);
 
-  // CORREÇÃO: Carregar despesas sempre que o userId mudar
+  // Carregar despesas sempre que o userId mudar
   useEffect(() => {
     if (userId) {
       loadExpenses();
@@ -80,7 +80,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     if (!userId) return;
     
     try {
-      // CORREÇÃO: Buscar todas as despesas do backend
+      // Buscar todas as despesas do backend
       const expenses = await api.getExpenses(userId);
       setHistory(expenses);
     } catch (err) {
@@ -101,12 +101,12 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     try {
       const result: TranscriptionResponse = await api.transcribeAudio(audioBlob, userId);
       
-      // CORREÇÃO: Usar total_amount em vez de amount (consistência com backend)
+      // Usar total_amount em vez de amount (consistência com backend)
       const newExpense: Expense = {
         id: result.expense_id,
         description: result.description,
         category: result.category,
-        total_amount: result.total_amount, // CORREÇÃO: total_amount em vez de amount
+        total_amount: result.total_amount,
         payment_method: result.payment_method,
         installments: result.installments?.length || 1,
         created_at: new Date().toISOString(),
@@ -141,63 +141,38 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     }
   };
 
-const handleConfirm = async (expense: Expense) => {
-  if (!userId) return;
+  const handleConfirm = async (expense: Expense) => {
+    if (!userId) return;
 
-  try {
-    setError(null);
-
-    // CORREÇÃO CRÍTICA: Enviar nomes em vez de IDs para o backend
-    const expenseToSave = {
-      description: expense.description,
-      total_amount: expense.total_amount,
-      payment_method: expense.payment_method,
-      user_id: userId,
-      cost_center: expense.cost_center, // CORREÇÃO: Enviar nome, não ID
-      category: expense.category, // CORREÇÃO: Enviar nome, não ID
-      installments: expense.installments > 1 ? 
-        Array.from({ length: expense.installments }, (_, i) => ({
-          amount: expense.total_amount / expense.installments,
-          due_date: new Date(Date.now() + (i * 30 * 24 * 60 * 60 * 1000)), // +30 dias por parcela
-          status: 'pending',
-          installment_number: i + 1
-        })) : []
-    };
-
-    console.log('Enviando despesa para o backend:', expenseToSave); // DEBUG
-
-    const savedExpense = await api.saveExpense(expenseToSave);
-    
-    // CORREÇÃO: Atualizar estado local com a despesa salva
-    setCurrentExpense(null);
-    
-    // CORREÇÃO: Recarregar histórico para garantir sincronização
-    await loadExpenses();
-  } catch (err) {
-    console.error('Erro ao salvar despesa:', err);
-    setError('Erro ao salvar despesa');
-  }
-};
-
-  const getCostCenterId = async (costCenterName: string): Promise<number> => {
-    // CORREÇÃO: Buscar ID real do centro de custo
     try {
-      const userInfo = await api.getUserInfo(userId!);
-      const costCenter = userInfo.cost_centers?.find(cc => cc.name === costCenterName);
-      return costCenter?.id || 1; // Fallback para ID 1
-    } catch {
-      return 1; // Fallback seguro
-    }
-  };
+      setError(null);
 
-  const getCategoryId = async (categoryName: string): Promise<number> => {
-    // CORREÇÃO: Buscar ID real da categoria
-    try {
-      const userInfo = await api.getUserInfo(userId!);
-      const category = userInfo.categories?.find(cat => cat.name === categoryName);
-      return category?.id || 1; // Fallback para ID 1
-    } catch {
-      return 1; // Fallback seguro
+      // Enviar nomes em vez de IDs para o backend
+      const expenseToSave = {
+        description: expense.description,
+        total_amount: expense.total_amount,
+        payment_method: expense.payment_method,
+        user_id: userId,
+        cost_center: expense.cost_center,
+        category: expense.category,
+        installments: expense.installments > 1 ? 
+          Array.from({ length: expense.installments }, (_, i) => ({
+            amount: expense.total_amount / expense.installments,
+            due_date: new Date(Date.now() + (i * 30 * 24 * 60 * 60 * 1000)),
+            status: 'pending',
+            installment_number: i + 1
+          })) : []
+      };
+
+      console.log('Enviando despesa para o backend:', expenseToSave);
+
+      await api.saveExpense(expenseToSave);
+      
+      setCurrentExpense(null);
+      await loadExpenses();
+    } catch (err) {
+      console.error('Erro ao salvar despesa:', err);
+      setError('Erro ao salvar despesa');
     }
   };
 
@@ -208,18 +183,16 @@ const handleConfirm = async (expense: Expense) => {
     }
 
     try {
-      // CORREÇÃO: Usar nomes em vez de IDs para atualização
+      // Usar nomes em vez de IDs para atualização
       const expenseData = {
         description: updatedExpense.description,
         total_amount: updatedExpense.total_amount,
         payment_method: updatedExpense.payment_method,
-        cost_center: updatedExpense.cost_center, // CORREÇÃO: Enviar nome
-        category: updatedExpense.category // CORREÇÃO: Enviar nome
+        cost_center: updatedExpense.cost_center,
+        category: updatedExpense.category
       };
 
       await api.updateExpense(updatedExpense.id, expenseData);
-      
-      // CORREÇÃO: Recarregar histórico após edição
       await loadExpenses();
     } catch (err) {
       console.error('Erro ao editar despesa:', err);
@@ -240,8 +213,6 @@ const handleConfirm = async (expense: Expense) => {
 
     try {
       await api.deleteExpense(expenseToDelete.id);
-      
-      // CORREÇÃO: Recarregar histórico após exclusão
       await loadExpenses();
     } catch (err) {
       console.error('Erro ao excluir despesa:', err);
@@ -293,12 +264,7 @@ const handleConfirm = async (expense: Expense) => {
 
         {/* Dashboard Content */}
         {userId && (
-          <Dashboard 
-            userId={userId} 
-            costCenters={onboardingData.costCenters}
-            categories={onboardingData.categories}
-            onRefresh={loadExpenses}
-          />
+          <Dashboard userId={userId} />
         )}
       </div>
     );

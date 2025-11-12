@@ -52,16 +52,9 @@ interface MonthlyExpenses {
 
 interface DashboardProps {
   userId: number;
-  costCenters?: string[];
-  categories?: string[];
-  onRefresh?: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ 
-  userId, 
-  costCenters = [],
-  onRefresh 
-}) => {
+const Dashboard: React.FC<DashboardProps> = ({ userId }) => {
   const [financialOverview, setFinancialOverview] = useState<FinancialOverview | null>(null);
   const [costCenterDetails, setCostCenterDetails] = useState<{[key: string]: CostCenterDetail}>({});
   const [monthlyExpenses, setMonthlyExpenses] = useState<MonthlyExpenses | null>(null);
@@ -138,7 +131,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       setExportLoading(true);
       
-      // SOLUÇÃO: Usando a função do api.ts
       const blob = await api.exportExpenses(
         userId, 
         dateFilter.startDate, 
@@ -150,7 +142,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       a.style.display = 'none';
       a.href = url;
       
-      // Nome do arquivo com data
       const today = new Date().toISOString().split('T')[0];
       a.download = `despesas_${today}.csv`;
       
@@ -215,7 +206,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className="w-16 sm:w-20 bg-gray-200 rounded-full h-2">
                   <div 
                     className={`h-2 rounded-full ${colors[index % colors.length]}`}
-                    style={{ width: `${Math.max(percentage, 5)}%` }} // Mínimo 5% para visibilidade
+                    style={{ width: `${Math.max(percentage, 5)}%` }}
                   ></div>
                 </div>
                 <span className="font-semibold text-gray-900 text-sm w-16 text-right">
@@ -442,7 +433,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="bg-gray-50 rounded-lg p-4">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Projeção dos Próximos Meses</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {financialOverview.future_projection.map((projection, index) => (
+                  {financialOverview.future_projection.map((projection) => (
                     <div key={projection.month} className="bg-white rounded-lg p-3 border border-gray-200">
                       <p className="font-semibold text-gray-900 text-sm capitalize">
                         {formatMonth(projection.month)}
@@ -509,7 +500,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           {activeTab === 'costcenters' && (
             <div className="space-y-6">
-              {/* CORREÇÃO: Mostrar todos os centros de custo automaticamente */}
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">Visão por Centro de Custo</h3>
                 <p className="text-sm text-gray-600">

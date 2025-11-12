@@ -1,12 +1,11 @@
+// ✅ URL FIXA PARA PRODUÇÃO
 const API_BASE_URL = 'https://voice-expense-app-production-production.up.railway.app';
 
-// Importar interfaces do types.ts
+// ✅ IMPORTS CORRETOS - APENAS O NECESSÁRIO
 import type { 
   Expense, 
-  Installment, 
   TranscriptionResponse, 
-  User, 
-  OnboardingData 
+  User 
 } from '../types';
 
 // Interface para o payload do onboarding (compatível com backend)
@@ -31,6 +30,45 @@ export const api = {
     
     if (!response.ok) {
       throw new Error('Falha ao criar/atualizar usuário');
+    }
+    
+    return response.json();
+  },
+
+  // ✅ MÉTODO ADICIONADO - getUserByEmail
+  async getUserByEmail(email: string): Promise<User> {
+    const response = await fetch(`${API_BASE_URL}/api/user/email/${encodeURIComponent(email)}`);
+    
+    if (!response.ok) {
+      throw new Error('Usuário não encontrado');
+    }
+    
+    return response.json();
+  },
+
+  // ✅ MÉTODO ADICIONADO - getUserInfo
+  async getUserInfo(userId: number): Promise<any> {
+    const response = await fetch(`${API_BASE_URL}/api/user/${userId}`);
+    
+    if (!response.ok) {
+      throw new Error('Falha ao carregar informações do usuário');
+    }
+    
+    return response.json();
+  },
+
+  // ✅ MÉTODO ADICIONADO - completeOnboarding
+  async completeOnboarding(onboardingData: OnboardingPayload): Promise<{ status: string; message: string }> {
+    const response = await fetch(`${API_BASE_URL}/api/onboarding`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(onboardingData),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Falha ao completar onboarding');
     }
     
     return response.json();
@@ -96,14 +134,13 @@ export const api = {
     return response.json();
   },
 
-  // CORREÇÃO: Usar nomes em vez de IDs
   async saveExpense(expenseData: {
     description: string;
     total_amount: number;
     payment_method: string;
     user_id: number;
-    cost_center: string; // CORREÇÃO: Mudar de cost_center_id para cost_center
-    category: string; // CORREÇÃO: Mudar de category_id para category
+    cost_center: string;
+    category: string;
     installments?: any[];
   }): Promise<Expense> {
     const response = await fetch(`${API_BASE_URL}/api/expenses`, {
@@ -121,14 +158,13 @@ export const api = {
     return response.json();
   },
 
-  // CORREÇÃO: Usar nomes em vez de IDs
   async updateExpense(expenseId: number, expenseData: Partial<Expense>): Promise<Expense> {
     const backendData = {
       description: expenseData.description,
       total_amount: expenseData.total_amount,
       payment_method: expenseData.payment_method,
-      cost_center: expenseData.cost_center, // CORREÇÃO: Enviar nome
-      category: expenseData.category // CORREÇÃO: Enviar nome
+      cost_center: expenseData.cost_center,
+      category: expenseData.category
     };
 
     const response = await fetch(`${API_BASE_URL}/api/expenses/${expenseId}`, {
