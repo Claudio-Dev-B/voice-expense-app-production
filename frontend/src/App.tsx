@@ -247,7 +247,6 @@ const App: React.FC = () => {
     return (
       <OnboardingFlow 
         onComplete={handleOnboardingComplete} 
-        userEmail={user.email} 
       />
     );
   }

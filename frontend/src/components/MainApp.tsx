@@ -176,7 +176,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     }
   };
 
-  const handleEdit = async (index: number, updatedExpense: Expense) => {
+  const handleEdit = async (updatedExpense: Expense) => {
     if (!updatedExpense.id) {
       console.error('Não é possível editar despesa sem ID');
       return;
@@ -200,9 +200,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     }
   };
 
-  const handleDelete = async (index: number) => {
-    const expenseToDelete = history[index];
-    if (!expenseToDelete?.id) {
+  const handleDelete = async (expenseId: number) => {
+    if (!expenseId) {
       console.error('Não é possível excluir despesa sem ID');
       return;
     }
@@ -212,7 +211,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     }
 
     try {
-      await api.deleteExpense(expenseToDelete.id);
+      await api.deleteExpense(expenseId);
       await loadExpenses();
     } catch (err) {
       console.error('Erro ao excluir despesa:', err);

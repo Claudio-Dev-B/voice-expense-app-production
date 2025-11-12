@@ -3,8 +3,8 @@ import type { Expense } from "../types";
 
 interface Props {
   expenses: Expense[];
-  onDelete: (index: number) => void;
-  onEdit: (index: number, expense: Expense) => void;
+  onDelete: (expenseId: number) => void;
+  onEdit: (expense: Expense) => void;
   costCenters?: string[];
   categories?: string[];
 }
@@ -16,7 +16,7 @@ const ExpenseHistory: React.FC<Props> = ({
   costCenters = ["Pessoal", "Loja", "Restaurante"],
   categories = ["Alimentação", "Transporte", "Moradia", "Saúde", "Educação", "Entretenimento", "Outros"]
 }) => {
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [editedExpense, setEditedExpense] = useState<Expense | null>(null);
 
   const paymentMethods = [
@@ -35,22 +35,28 @@ const ExpenseHistory: React.FC<Props> = ({
     return new Date(dateString).toLocaleDateString('pt-BR');
   };
 
-  const handleEditClick = (index: number, expense: Expense) => {
-    setEditingIndex(index);
+  const handleEditClick = (expense: Expense) => {
+    setEditingId(expense.id || null);
     setEditedExpense({ ...expense });
   };
 
   const handleSaveEdit = () => {
-    if (editingIndex !== null && editedExpense) {
-      onEdit(editingIndex, editedExpense);
-      setEditingIndex(null);
+    if (editedExpense) {
+      onEdit(editedExpense);
+      setEditingId(null);
       setEditedExpense(null);
     }
   };
 
   const handleCancelEdit = () => {
-    setEditingIndex(null);
+    setEditingId(null);
     setEditedExpense(null);
+  };
+
+  const handleDeleteClick = (expense: Expense) => {
+    if (expense.id) {
+      onDelete(expense.id);
+    }
   };
 
   // Mostrar apenas as últimas 5 despesas
@@ -82,9 +88,9 @@ const ExpenseHistory: React.FC<Props> = ({
       </div>
 
       <div className="space-y-4">
-        {recentExpenses.map((expense, index) => (
-          <div key={expense.id || index} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-            {editingIndex === index ? (
+        {recentExpenses.map((expense) => (
+          <div key={expense.id} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+            {editingId === expense.id ? (
               // Modo edição
               <div className="space-y-3">
                 <div>
@@ -219,13 +225,13 @@ const ExpenseHistory: React.FC<Props> = ({
                 <div className="flex space-x-2">
                   <button
                     className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 px-3 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
-                    onClick={() => handleEditClick(index, expense)}
+                    onClick={() => handleEditClick(expense)}
                   >
                     Editar
                   </button>
                   <button
                     className="flex-1 bg-red-500 text-white py-2 px-3 rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
-                    onClick={() => onDelete(index)}
+                    onClick={() => handleDeleteClick(expense)}
                   >
                     Excluir
                   </button>
