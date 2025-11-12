@@ -1,30 +1,3 @@
-# Usar imagem Python mais leve
-FROM python:3.11-slim
-
-WORKDIR /app/backend
-
-# Instalar dependências mínimas
-RUN apk update && apk add --no-cache \
-    ffmpeg \
-    curl \
-    && adduser -D -u 1000 appuser
-
-# Copiar requirements primeiro
-COPY backend/requirements.txt .
-
-# Instalar dependências CORE (mais rápidas)
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-    fastapi==0.115.5 \
-    uvicorn[standard]==0.32.1 \
-    sqlmodel==0.0.22 \
-    sqlalchemy==2.0.36 \
-    psycopg2-binary==2.9.10 \
-    python-dateutil==2.9.0.post0 \
-    pydantic==2.9.2 \
-    python-multipart==0.0.9 \
-    requests==2.32.3
-# Usar Python slim (compatível com Whisper)
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -53,13 +26,17 @@ RUN pip install --no-cache-dir --upgrade pip && \
     python-multipart==0.0.9 \
     requests==2.32.3
 
-# Instalar whisper com dependências específicas
+# Instalar whisper
 RUN pip install --no-cache-dir \
     torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir openai-whisper==20231117
 
 # Copiar aplicação
-COPY backend/app ./app
+COPY backend/app ./app/backend/app
+
+# Copiar script de start
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 # Baixar modelo whisper base
 RUN python -c "import whisper; whisper.load_model('base')" && \
@@ -70,4 +47,5 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Usar script de start
+CMD ["/app/start.sh"]
