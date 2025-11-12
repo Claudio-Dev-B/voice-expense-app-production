@@ -1,5 +1,4 @@
-// CORREÇÃO: Usar a porta correta do backend
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Importar interfaces do types.ts
 import type { 
@@ -32,42 +31,6 @@ export const api = {
     
     if (!response.ok) {
       throw new Error('Falha ao criar/atualizar usuário');
-    }
-    
-    return response.json();
-  },
-
-  async getUserByEmail(email: string): Promise<User> {
-    const response = await fetch(`${API_BASE_URL}/api/user/email/${encodeURIComponent(email)}`);
-    
-    if (!response.ok) {
-      throw new Error('Usuário não encontrado');
-    }
-    
-    return response.json();
-  },
-
-  async getUserInfo(userId: number): Promise<User> {
-    const response = await fetch(`${API_BASE_URL}/api/user/${userId}`);
-    
-    if (!response.ok) {
-      throw new Error('Falha ao carregar informações do usuário');
-    }
-    
-    return response.json();
-  },
-
-  async completeOnboarding(onboardingData: OnboardingPayload): Promise<{ status: string; message: string }> {
-    const response = await fetch(`${API_BASE_URL}/api/onboarding`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(onboardingData),
-    });
-    
-    if (!response.ok) {
-      throw new Error('Falha ao completar onboarding');
     }
     
     return response.json();
