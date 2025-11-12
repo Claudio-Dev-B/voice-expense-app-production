@@ -3,6 +3,9 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlmodel import Session, select
 import os
 from datetime import timedelta
+import urllib.parse
+import requests
+from fastapi.responses import RedirectResponse, HTMLResponse
 
 from .db import get_session
 from .security import verify_google_token, create_user_token, log_auth_attempt
@@ -18,13 +21,222 @@ class GoogleAuthRequest:
         self.google_id = google_id
         self.picture = picture
 
+@router.get("/api/auth/google/login")
+async def google_login(request: Request):
+    """Redireciona para o Google OAuth ou mostra página de login"""
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        
+        if not client_id:
+            # Se não configurado, mostrar página de erro
+            return HTMLResponse("""
+            <html>
+                <body>
+                    <h1>Google OAuth não configurado</h1>
+                    <p>Variáveis de ambiente GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET não estão configuradas.</p>
+                    <button onclick="window.close()">Fechar</button>
+                </body>
+            </html>
+            """)
+        
+        # Parâmetros para o Google OAuth
+        redirect_uri = f"{request.base_url}api/auth/google/callback"
+        scope = "email profile openid"
+        
+        google_auth_url = (
+            f"https://accounts.google.com/o/oauth2/v2/auth?"
+            f"client_id={client_id}&"
+            f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
+            f"response_type=code&"
+            f"scope={urllib.parse.quote(scope)}&"
+            f"access_type=offline&"
+            f"prompt=consent"
+        )
+        
+        return RedirectResponse(google_auth_url)
+        
+    except Exception as e:
+        return HTMLResponse(f"""
+        <html>
+            <body>
+                <h1>Erro no login</h1>
+                <p>{str(e)}</p>
+                <button onclick="window.close()">Fechar</button>
+            </body>
+        </html>
+        """)
+
+@router.get("/api/auth/google/callback")
+async def google_callback(code: str, request: Request, session: Session = Depends(get_session)):
+    """Callback do Google OAuth"""
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            return HTMLResponse("""
+            <html>
+                <body>
+                    <h1>Erro de configuração</h1>
+                    <p>Credenciais do Google não configuradas.</p>
+                    <button onclick="window.close()">Fechar</button>
+                </body>
+            </html>
+            """)
+        
+        # Trocar code por access token
+        token_url = "https://oauth2.googleapis.com/token"
+        redirect_uri = f"{request.base_url}api/auth/google/callback"
+        
+        token_response = requests.post(token_url, data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri
+        })
+        
+        token_data = token_response.json()
+        
+        if "error" in token_data:
+            return HTMLResponse(f"""
+            <html>
+                <body>
+                    <h1>Erro no Google OAuth</h1>
+                    <p>{token_data['error']}</p>
+                    <button onclick="window.close()">Fechar</button>
+                </body>
+            </html>
+            """)
+        
+        access_token = token_data["access_token"]
+        
+        # Obter informações do usuário
+        userinfo_response = requests.get(
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        
+        if userinfo_response.status_code != 200:
+            return HTMLResponse("""
+            <html>
+                <body>
+                    <h1>Erro ao obter informações do usuário</h1>
+                    <p>Não foi possível obter informações do Google.</p>
+                    <button onclick="window.close()">Fechar</button>
+                </body>
+            </html>
+            """)
+        
+        userinfo = userinfo_response.json()
+        
+        # Validar dados obrigatórios
+        if not all([userinfo.get("sub"), userinfo.get("email"), userinfo.get("name")]):
+            return HTMLResponse("""
+            <html>
+                <body>
+                    <h1>Dados incompletos do Google</h1>
+                    <p>Não foi possível obter todas as informações necessárias.</p>
+                    <button onclick="window.close()">Fechar</button>
+                </body>
+            </html>
+            """)
+        
+        # Buscar ou criar usuário
+        user = session.exec(
+            select(User).where(User.google_id == userinfo["sub"])
+        ).first()
+        
+        if not user:
+            # Buscar por email
+            user = session.exec(
+                select(User).where(User.email == userinfo["email"])
+            ).first()
+            
+            if user:
+                # Usuário existe mas não tem Google ID - atualizar
+                user.google_id = userinfo["sub"]
+                if userinfo.get("picture"):
+                    user.picture = userinfo["picture"]
+            else:
+                # Criar novo usuário
+                user = User(
+                    email=userinfo["email"],
+                    name=userinfo["name"],
+                    google_id=userinfo["sub"],
+                    picture=userinfo.get("picture")
+                )
+                session.add(user)
+        
+        # Atualizar informações
+        if user.name != userinfo["name"]:
+            user.name = userinfo["name"]
+        
+        if userinfo.get("picture") and user.picture != userinfo["picture"]:
+            user.picture = userinfo["picture"]
+        
+        session.commit()
+        session.refresh(user)
+        
+        # Criar JWT token
+        jwt_token = create_user_token(user)
+        
+        # HTML que envia mensagem para o window opener e fecha
+        html_content = f"""
+        <html>
+            <body>
+                <script>
+                    if (window.opener && !window.opener.closed) {{
+                        window.opener.postMessage({{
+                            type: 'GOOGLE_AUTH_SUCCESS',
+                            user: {{
+                                id: {user.id},
+                                email: "{user.email}",
+                                name: "{user.name.replace('"', '\\"')}",
+                                picture: "{user.picture or ''}",
+                                onboarding_completed: {str(user.onboarding_completed).lower()},
+                                user_type: "{user.user_type}"
+                            }},
+                            token: "{jwt_token}"
+                        }}, "{str(request.base_url)}");
+                    }}
+                    window.close();
+                </script>
+                <p>Login realizado com sucesso! Você pode fechar esta janela.</p>
+                <button onclick="window.close()">Fechar</button>
+            </body>
+        </html>
+        """
+        
+        return HTMLResponse(html_content)
+        
+    except Exception as e:
+        error_html = f"""
+        <html>
+            <body>
+                <script>
+                    if (window.opener && !window.opener.closed) {{
+                        window.opener.postMessage({{
+                            type: 'GOOGLE_AUTH_ERROR',
+                            error: "Erro no servidor: {str(e).replace('"', '\\"')}"
+                        }}, "*");
+                    }}
+                </script>
+                <h1>Erro no login</h1>
+                <p>{str(e)}</p>
+                <button onclick="window.close()">Fechar</button>
+            </body>
+        </html>
+        """
+        return HTMLResponse(error_html)
+
 @router.post("/api/auth/google")
 async def google_auth(
     request: Request,
     auth_data: dict,
     session: Session = Depends(get_session)
 ):
-    """Autenticação com Google OAuth"""
+    """Autenticação com Google OAuth (endpoint alternativo)"""
     try:
         access_token = auth_data.get("access_token")
         email = auth_data.get("email")
@@ -174,7 +386,7 @@ async def logout(
 @router.get("/api/auth/me")
 async def get_current_user_info(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(lambda: get_current_user(session))
 ):
     """Retorna informações do usuário atual"""
     try:
@@ -203,7 +415,7 @@ async def get_current_user_info(
 @router.post("/api/auth/validate")
 async def validate_token(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(lambda: get_current_user(session))
 ):
     """Valida se o token JWT é válido"""
     try:

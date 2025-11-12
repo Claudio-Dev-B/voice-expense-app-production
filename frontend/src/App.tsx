@@ -1,4 +1,4 @@
-// App.tsx
+// App.tsx - ATUALIZADO
 import React, { useState, useEffect } from 'react';
 import GoogleAuth from './components/GoogleAuth';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -44,45 +44,34 @@ const App: React.FC = () => {
       await api.healthCheck();
       
       // Buscar informações do usuário atual
-      const userResponse = await api.getUserInfo(1); // O backend vai usar o token JWT para identificar o usuário
-      
-      const userData: User = {
-        id: userResponse.user.id,
-        email: userResponse.user.email,
-        name: userResponse.user.name,
-        picture: userResponse.user.picture,
-        onboarding_completed: userResponse.user.onboarding_completed,
-        user_type: userResponse.user.user_type
-      };
-      
-      setUser(userData);
-
-      // Se já completou onboarding, carregar dados
-      if (userResponse.user.onboarding_completed) {
-        const existingOnboardingData: OnboardingData = {
-          userType: userResponse.user.user_type as 'pessoal' | 'empresarial' | 'pessoal_empresarial',
-          costCenters: userResponse.cost_centers?.map((cc: any) => cc.name) || ['Pessoal'],
-          categories: userResponse.categories?.map((cat: any) => cat.name) || ['Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Educação', 'Entretenimento', 'Outros']
-        };
-        
-        setOnboardingData(existingOnboardingData);
+      // NOTA: Precisamos de uma rota que retorne o usuário baseado no token JWT
+      // Por enquanto, vamos usar uma abordagem alternativa
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        throw new Error('Token não encontrado');
       }
+      
+      // Tentar buscar usuário pelo token (precisamos implementar esta rota no backend)
+      // Por enquanto, vamos redirecionar para login
+      setLoading(false);
       
     } catch (error) {
       console.error('Erro ao validar token:', error);
       // Token inválido ou expirado - limpar e redirecionar para login
       localStorage.removeItem('access_token');
       setError('Sessão expirada. Faça login novamente.');
-    } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleLogin = async (authData: any) => {
+  const handleGoogleLogin = async (authData: { user: User; token: string }) => {
     try {
       setError(null);
+      setLoading(true);
       
-      // O GoogleAuth já salvou o token no localStorage e retornou os dados do usuário
+      console.log('Dados recebidos do Google Auth:', authData);
+      
+      // O token já foi salvo no localStorage pelo GoogleAuth
       const userData: User = {
         id: authData.user.id,
         email: authData.user.email,
