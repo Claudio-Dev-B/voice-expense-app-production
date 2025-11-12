@@ -20,5 +20,10 @@ pydantic-settings==2.6.0
 # Uploads
 python-multipart==0.0.9
 
+# Autenticação JWT e segurança
+python-jose[cryptography]==3.3.0
+cryptography==42.0.8
+passlib[bcrypt]==1.7.4
+
 # Utilitários
 requests==2.32.3
