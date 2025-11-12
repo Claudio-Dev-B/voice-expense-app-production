@@ -7,8 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean \
-    && useradd -m -u 1000 appuser
+    && apt-get clean
 
 # Copiar requirements primeiro
 COPY backend/requirements.txt .
@@ -31,21 +30,14 @@ RUN pip install --no-cache-dir \
     torch torchaudio --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir openai-whisper==20231117
 
-# Copiar aplicação
-COPY backend/app ./app/backend/app
-
-# Copiar script de start
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# Copiar APENAS a aplicação (não a pasta backend)
+COPY backend/app/ ./app/
 
 # Baixar modelo whisper base
 RUN python -c "import whisper; whisper.load_model('base')" && \
     echo "Whisper base model loaded successfully"
 
-# Mudar para usuário não-root
-USER appuser
-
 EXPOSE 8000
 
-# Usar script de start
-CMD ["/app/start.sh"]
+# Comando direto - a aplicação está em /app/
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
