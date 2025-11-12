@@ -2,8 +2,17 @@
 builder = "nixpacks"
 
 [deploy]
-service = "backend"
 startCommand = "cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
+[nixpacks]
+plan = """
+providers:
+  python:
+    version: "3.11"
+    installCommand: cd backend && pip install -r requirements.txt
+    buildCommand: cd backend && echo "Building Python app..."
+    startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+"""
 
 [variables]
 ENVIRONMENT = "production"
