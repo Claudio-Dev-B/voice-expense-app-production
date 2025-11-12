@@ -1,7 +1,7 @@
 # Usar imagem Python mais leve
-FROM python:3.11-alpine
+FROM python:3.11-slim
 
-WORKDIR /app
+WORKDIR /app/backend
 
 # Instalar dependências mínimas
 RUN apk update && apk add --no-cache \
