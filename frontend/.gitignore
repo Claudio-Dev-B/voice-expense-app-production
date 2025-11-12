@@ -26,3 +26,4 @@ dist-ssr
 echo "backend/whisper_models/" >> .gitignore
 echo "*.pt" >> .gitignore
 echo "*.bin" >> .gitignore
+.vercel
