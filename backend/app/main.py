@@ -30,7 +30,17 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    create_db_and_tables()
+    """Inicialização robusta com fallbacks"""
+    try:
+        # Verificar conexão primeiro
+        from app.db import check_database_connection
+        if check_database_connection():
+            init_db()
+        else:
+            logger.warning("Banco não disponível, mas app continuará rodando")
+    except Exception as e:
+        logger.error(f"Erro na inicialização: {e}")
+        # App continua rodando mesmo com erro no banco
 
 # ===== UTILITÁRIOS =====
 

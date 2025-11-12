@@ -2,18 +2,73 @@ from sqlmodel import create_engine, SQLModel, Session
 import os
 from sqlalchemy.orm import sessionmaker
 from typing import Generator
+from sqlalchemy.pool import StaticPool  # 👈 Adicionar para SQLite fallback
 
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:example@localhost:5432/expenses')
+# CORREÇÃO CRÍTICA PARA RAILWAY
+def get_database_url():
+    database_url = os.getenv('DATABASE_URL')
+    
+    if not database_url:
+        # Fallback para SQLite em desenvolvimento
+        return "sqlite:///./database.db"
+    
+    # Railway usa postgres://, SQLModel precisa de postgresql://
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    
+    return database_url
 
-engine = create_engine(DATABASE_URL, echo=False)
+DATABASE_URL = get_database_url()
+
+# CONFIGURAÇÃO OTIMIZADA PARA AMBIENTES
+if DATABASE_URL.startswith('sqlite'):
+    # Configuração para SQLite (desenvolvimento)
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool
+    )
+else:
+    # Configuração para PostgreSQL (Railway)
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,  # 👈 Reconecta automaticamente
+        pool_recycle=300,    # 👈 Evita conexões stale
+    )
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
-    SQLModel.metadata.create_all(bind=engine)
+    """Inicializa o banco de dados com tratamento de erro"""
+    try:
+        SQLModel.metadata.create_all(bind=engine)
+        print("✅ Banco de dados inicializado com sucesso")
+    except Exception as e:
+        print(f"❌ Erro ao inicializar banco: {e}")
+        # Não quebra a aplicação completamente
+        # Em produção, isso permite que o app rode mesmo com problemas no banco
 
 def get_session() -> Generator[Session, None, None]:
+    """Dependency para obter sessão do banco com tratamento robusto"""
     db = SessionLocal()
     try:
         yield db
+    except Exception as e:
+        db.rollback()
+        raise e
     finally:
         db.close()
+
+# 👇 ADICIONAR ESTA FUNÇÃO PARA DEBUG
+def check_database_connection():
+    """Verifica se a conexão com o banco está funcionando"""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute("SELECT 1")
+            print("✅ Conexão com banco de dados estabelecida")
+            return True
+    except Exception as e:
+        print(f"❌ Falha na conexão com banco: {e}")
+        return False
