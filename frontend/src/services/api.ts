@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = 'https://voice-expense-app-production-production.up.railway.app';
 
 // Importar interfaces do types.ts
 import type { 
