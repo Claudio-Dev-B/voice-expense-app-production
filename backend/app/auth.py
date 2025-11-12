@@ -1,0 +1,238 @@
+# backend/app/auth.py
+from fastapi import APIRouter, HTTPException, Depends, Request
+from sqlmodel import Session, select
+import os
+from datetime import timedelta
+
+from .db import get_session
+from .security import verify_google_token, create_user_token, log_auth_attempt
+from .models import User
+
+router = APIRouter()
+
+class GoogleAuthRequest:
+    def __init__(self, access_token: str, email: str = None, name: str = None, google_id: str = None, picture: str = None):
+        self.access_token = access_token
+        self.email = email
+        self.name = name
+        self.google_id = google_id
+        self.picture = picture
+
+@router.post("/api/auth/google")
+async def google_auth(
+    request: Request,
+    auth_data: dict,
+    session: Session = Depends(get_session)
+):
+    """Autenticação com Google OAuth"""
+    try:
+        access_token = auth_data.get("access_token")
+        email = auth_data.get("email")
+        name = auth_data.get("name")
+        google_id = auth_data.get("google_id")
+        picture = auth_data.get("picture")
+        
+        if not access_token:
+            raise HTTPException(status_code=400, detail="Access token é obrigatório")
+        
+        # Obter IP do cliente para logging
+        client_ip = request.client.host if request.client else "unknown"
+        
+        # Verificar token com Google (ou usar dados mock em desenvolvimento)
+        if os.getenv("ENVIRONMENT") == "production":
+            # Em produção, verificar token real com Google
+            google_user_info = await verify_google_token(access_token)
+        else:
+            # Em desenvolvimento, usar dados fornecidos
+            if not all([email, name, google_id]):
+                raise HTTPException(status_code=400, detail="Em desenvolvimento, email, name e google_id são obrigatórios")
+            
+            google_user_info = {
+                "email": email,
+                "name": name,
+                "google_id": google_id,
+                "picture": picture
+            }
+        
+        # Buscar usuário existente pelo Google ID
+        user = session.exec(
+            select(User).where(User.google_id == google_user_info["google_id"])
+        ).first()
+        
+        if not user:
+            # Se não encontrou pelo Google ID, buscar pelo email
+            user = session.exec(
+                select(User).where(User.email == google_user_info["email"])
+            ).first()
+            
+            if user:
+                # Usuário existe mas não tem Google ID - atualizar
+                user.google_id = google_user_info["google_id"]
+                if google_user_info.get("picture"):
+                    user.picture = google_user_info["picture"]
+            else:
+                # Criar novo usuário
+                user = User(
+                    email=google_user_info["email"],
+                    name=google_user_info["name"],
+                    google_id=google_user_info["google_id"],
+                    picture=google_user_info.get("picture")
+                )
+                session.add(user)
+        
+        # Atualizar informações do usuário se necessário
+        if user.name != google_user_info["name"]:
+            user.name = google_user_info["name"]
+        
+        if google_user_info.get("picture") and user.picture != google_user_info["picture"]:
+            user.picture = google_user_info["picture"]
+        
+        session.commit()
+        session.refresh(user)
+        
+        # Criar JWT token
+        jwt_token = create_user_token(user)
+        
+        # Log de sucesso
+        log_auth_attempt(user.email, True, client_ip)
+        
+        return {
+            "access_token": jwt_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "picture": user.picture,
+                "onboarding_completed": user.onboarding_completed,
+                "user_type": user.user_type
+            }
+        }
+        
+    except HTTPException:
+        # Log de falha
+        email_attempt = auth_data.get("email", "unknown")
+        client_ip = request.client.host if request.client else "unknown"
+        log_auth_attempt(email_attempt, False, client_ip)
+        raise
+    except Exception as e:
+        # Log de erro
+        email_attempt = auth_data.get("email", "unknown")
+        client_ip = request.client.host if request.client else "unknown"
+        log_auth_attempt(email_attempt, False, client_ip)
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erro durante autenticação: {str(e)}"
+        )
+
+@router.post("/api/auth/refresh")
+async def refresh_token(
+    request: Request,
+    session: Session = Depends(get_session)
+):
+    """Refresh JWT token"""
+    try:
+        # TODO: Implementar refresh tokens
+        # Por enquanto, retornar erro
+        raise HTTPException(
+            status_code=501,
+            detail="Refresh token não implementado"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao renovar token: {str(e)}"
+        )
+
+@router.post("/api/auth/logout")
+async def logout(
+    request: Request,
+    session: Session = Depends(get_session)
+):
+    """Logout do usuário"""
+    try:
+        # Em uma implementação real, invalidaríamos o token
+        # Por enquanto, apenas retornar sucesso
+        client_ip = request.client.host if request.client else "unknown"
+        
+        # Log de logout
+        print(f"LOGOUT - IP: {client_ip}")
+        
+        return {
+            "status": "success",
+            "message": "Logout realizado com sucesso"
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro durante logout: {str(e)}"
+        )
+
+@router.get("/api/auth/me")
+async def get_current_user_info(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """Retorna informações do usuário atual"""
+    try:
+        user = session.get(User, current_user.id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "picture": user.picture,
+                "onboarding_completed": user.onboarding_completed,
+                "user_type": user.user_type,
+                "created_at": user.created_at
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao buscar informações do usuário: {str(e)}"
+        )
+
+@router.post("/api/auth/validate")
+async def validate_token(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """Valida se o token JWT é válido"""
+    try:
+        user = session.get(User, current_user.id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
+        
+        return {
+            "valid": True,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=401,
+            detail="Token inválido"
+        )
+
+# Função auxiliar para obter usuário atual (usada em outras partes do sistema)
+def get_current_user(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(verify_token)
+):
+    """Obtém o objeto User completo baseado no token"""
+    user = session.get(User, current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return user

@@ -1,3 +1,4 @@
+// components/ExpenseHistory.tsx
 import React, { useState } from "react";
 import type { Expense } from "../types";
 
@@ -7,6 +8,7 @@ interface Props {
   onEdit: (expense: Expense) => void;
   costCenters?: string[];
   categories?: string[];
+  sharedAccountName?: string;
 }
 
 const ExpenseHistory: React.FC<Props> = ({ 
@@ -14,7 +16,8 @@ const ExpenseHistory: React.FC<Props> = ({
   onDelete, 
   onEdit, 
   costCenters = ["Pessoal", "Loja", "Restaurante"],
-  categories = ["Alimentação", "Transporte", "Moradia", "Saúde", "Educação", "Entretenimento", "Outros"]
+  categories = ["Alimentação", "Transporte", "Moradia", "Saúde", "Educação", "Entretenimento", "Outros"],
+  sharedAccountName
 }) => {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editedExpense, setEditedExpense] = useState<Expense | null>(null);
@@ -62,6 +65,33 @@ const ExpenseHistory: React.FC<Props> = ({
   // Mostrar apenas as últimas 5 despesas
   const recentExpenses = expenses.slice(0, 5);
 
+  // Mapear payment_method para o formato do select (similar ao ExpenseForm)
+  const mapPaymentMethodToSelect = (paymentMethod: string): string => {
+    const mapping: { [key: string]: string } = {
+      'cartão crédito': 'Cartão Crédito',
+      'cartão débito': 'Cartão Débito', 
+      'transferência': 'Transferência',
+      'dinheiro': 'Dinheiro',
+      'pix': 'PIX',
+      'boleto': 'Boleto',
+      'indefinida': 'Outros'
+    };
+    return mapping[paymentMethod] || paymentMethod || 'Outros';
+  };
+
+  const mapSelectToPaymentMethod = (selectValue: string): string => {
+    const mapping: { [key: string]: string } = {
+      'Cartão Crédito': 'cartão crédito',
+      'Cartão Débito': 'cartão débito',
+      'Transferência': 'transferência', 
+      'Dinheiro': 'dinheiro',
+      'PIX': 'pix',
+      'Boleto': 'boleto',
+      'Outros': 'indefinida'
+    };
+    return mapping[selectValue] || selectValue || 'indefinida';
+  };
+
   return (
     <div className="card p-6">
       <div className="flex items-center justify-between mb-6">
@@ -72,6 +102,7 @@ const ExpenseHistory: React.FC<Props> = ({
           <div>
             <h2 className="font-semibold text-gray-900">Histórico de Despesas</h2>
             <p className="text-sm text-gray-500">
+              {sharedAccountName ? `Conta: ${sharedAccountName} • ` : ''}
               {recentExpenses.length > 0 
                 ? `${recentExpenses.length} últimas despesas` 
                 : 'Nenhuma despesa registrada'
@@ -110,6 +141,7 @@ const ExpenseHistory: React.FC<Props> = ({
                     <input
                       type="number"
                       step="0.01"
+                      min="0"
                       value={editedExpense?.total_amount || 0}
                       onChange={(e) => setEditedExpense(prev => prev ? {...prev, total_amount: parseFloat(e.target.value) || 0} : null)}
                       className="w-full p-2 border border-gray-300 rounded-lg text-sm"
@@ -121,6 +153,7 @@ const ExpenseHistory: React.FC<Props> = ({
                     <input
                       type="number"
                       min="1"
+                      max="24"
                       value={editedExpense?.installments || 1}
                       onChange={(e) => setEditedExpense(prev => prev ? {...prev, installments: parseInt(e.target.value) || 1} : null)}
                       className="w-full p-2 border border-gray-300 rounded-lg text-sm"
@@ -159,8 +192,8 @@ const ExpenseHistory: React.FC<Props> = ({
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Forma de Pagamento</label>
                   <select
-                    value={editedExpense?.payment_method || "Outros"}
-                    onChange={(e) => setEditedExpense(prev => prev ? {...prev, payment_method: e.target.value} : null)}
+                    value={mapPaymentMethodToSelect(editedExpense?.payment_method || "indefinida")}
+                    onChange={(e) => setEditedExpense(prev => prev ? {...prev, payment_method: mapSelectToPaymentMethod(e.target.value)} : null)}
                     className="w-full p-2 border border-gray-300 rounded-lg text-sm"
                   >
                     {paymentMethods.map(method => (
@@ -168,6 +201,19 @@ const ExpenseHistory: React.FC<Props> = ({
                     ))}
                   </select>
                 </div>
+
+                {/* Indicador de conta compartilhada (somente leitura) */}
+                {expense.shared_account_name && (
+                  <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center space-x-2 text-sm">
+                      <span className="text-blue-600">🏢</span>
+                      <span className="font-medium text-blue-800">Conta: {expense.shared_account_name}</span>
+                    </div>
+                    <p className="text-xs text-blue-600 mt-1">
+                      Esta despesa pertence a uma conta compartilhada
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex space-x-2 pt-2">
                   <button
@@ -188,37 +234,50 @@ const ExpenseHistory: React.FC<Props> = ({
               // Modo visualização
               <>
                 <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h3 className="font-semibold text-gray-900 text-sm">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-gray-900 text-sm mb-1">
                       {expense.description || "Sem descrição"}
                     </h3>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {formatDate(expense.created_at)}
-                    </p>
+                    
+                    {/* Indicador de conta compartilhada */}
+                    {expense.shared_account_name && (
+                      <div className="flex items-center space-x-1 mb-2">
+                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full flex items-center space-x-1">
+                          <span>🏢</span>
+                          <span>{expense.shared_account_name}</span>
+                        </span>
+                      </div>
+                    )}
+                    
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                      <span>{formatDate(expense.created_at)}</span>
+                      <span>•</span>
+                      <span>{expense.cost_center}</span>
+                      <span>•</span>
+                      <span>{expense.category}</span>
+                      <span>•</span>
+                      <span className="capitalize">
+                        {mapPaymentMethodToSelect(expense.payment_method)}
+                      </span>
+                      {(expense.installments || 1) > 1 && (
+                        <>
+                          <span>•</span>
+                          <span className="text-orange-600 font-medium">
+                            {(expense.installments || 1)}x
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-lg font-bold text-blue-600">
-                    {formatCurrency(expense.total_amount)}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                  <div>
-                    <span className="text-gray-500">Categoria:</span>
-                    <span className="ml-1 font-medium">{expense.category}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Pagamento:</span>
-                    <span className="ml-1 font-medium">{expense.payment_method}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Centro de Custo:</span>
-                    <span className="ml-1 font-medium">{expense.cost_center}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Parcelas:</span>
-                    <span className="ml-1 font-medium">
-                      {expense.installments || 1}x
+                  <div className="text-right ml-4 flex-shrink-0">
+                    <span className="text-lg font-bold text-blue-600 block">
+                      {formatCurrency(expense.total_amount)}
                     </span>
+                    {(expense.installments || 1) > 1 && expense.total_amount > 0 && (
+                      <span className="text-xs text-gray-500 block">
+                        {formatCurrency(expense.total_amount / (expense.installments || 1))}/parcela
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -248,8 +307,38 @@ const ExpenseHistory: React.FC<Props> = ({
             <span className="text-2xl">📝</span>
           </div>
           <p className="text-gray-500 text-sm">
-            Nenhuma despesa registrada ainda
+            {sharedAccountName 
+              ? `Nenhuma despesa encontrada na conta ${sharedAccountName}`
+              : 'Nenhuma despesa registrada ainda'
+            }
           </p>
+        </div>
+      )}
+
+      {/* Estatísticas rápidas */}
+      {recentExpenses.length > 0 && (
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="text-center p-3 bg-blue-50 rounded-lg">
+              <div className="font-semibold text-blue-900">
+                {formatCurrency(expenses.reduce((sum, exp) => sum + exp.total_amount, 0))}
+              </div>
+              <div className="text-blue-600 text-xs">Total Geral</div>
+            </div>
+            <div className="text-center p-3 bg-green-50 rounded-lg">
+              <div className="font-semibold text-green-900">{expenses.length}</div>
+              <div className="text-green-600 text-xs">Total Despesas</div>
+            </div>
+          </div>
+          
+          {/* Filtro por conta compartilhada */}
+          {sharedAccountName && (
+            <div className="mt-3 text-center">
+              <p className="text-xs text-gray-500">
+                Mostrando despesas da conta: <span className="font-medium text-gray-700">{sharedAccountName}</span>
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,3 +1,4 @@
+# backend/app/main.py
 from fastapi import FastAPI, HTTPException, Depends, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select, func, extract
@@ -12,6 +13,9 @@ from fastapi.responses import StreamingResponse
 from app.models import User, Expense, CostCenter, Category, Installment, PaymentStatus, UserType
 from app.db import get_session, init_db as create_db_and_tables
 from app.nlu.transcribe import transcribe_and_extract
+from app.accounts import router as accounts_router
+from app.auth import router as auth_router
+from app.security import verify_token
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +31,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Incluir routers
+app.include_router(accounts_router)
+app.include_router(auth_router)
 
 @app.on_event("startup")
 def on_startup():
@@ -282,13 +290,21 @@ async def test_audio_processing(request: dict, session: Session = Depends(get_se
 # ===== ENDPOINTS DE DESPESAS =====
 
 @app.get("/api/expenses")
-async def get_expenses(user_id: int = Query(...), session: Session = Depends(get_session)):
-    """Retorna todas as despesas do usuário"""
+async def get_expenses(
+    user_id: int = Query(...),
+    shared_account_id: Optional[int] = Query(None),
+    session: Session = Depends(get_session)
+):
+    """Retorna todas as despesas do usuário, com opção de filtrar por conta compartilhada"""
     try:
+        query = select(Expense).where(Expense.user_id == user_id)
+        
+        # Filtrar por conta compartilhada se especificado
+        if shared_account_id:
+            query = query.where(Expense.shared_account_id == shared_account_id)
+        
         expenses = session.exec(
-            select(Expense)
-            .where(Expense.user_id == user_id)
-            .order_by(Expense.transaction_date.desc())
+            query.order_by(Expense.transaction_date.desc())
         ).all()
         
         result = []
@@ -298,6 +314,10 @@ async def get_expenses(user_id: int = Query(...), session: Session = Depends(get
             installments = session.exec(
                 select(Installment).where(Installment.expense_id == expense.id)
             ).all()
+            
+            shared_account = None
+            if expense.shared_account_id:
+                shared_account = session.get(SharedAccount, expense.shared_account_id)
             
             result.append({
                 "id": expense.id,
@@ -310,7 +330,9 @@ async def get_expenses(user_id: int = Query(...), session: Session = Depends(get
                 "created_at": expense.transaction_date.isoformat(),
                 "text": expense.description,
                 "cost_center_id": expense.cost_center_id,
-                "category_id": expense.category_id
+                "category_id": expense.category_id,
+                "shared_account_id": expense.shared_account_id,
+                "shared_account_name": shared_account.name if shared_account else None
             })
         
         return result
@@ -381,6 +403,13 @@ async def create_expense(expense_data: dict, session: Session = Depends(get_sess
         else:
             num_installments = 1
         
+        # Verificar se é despesa compartilhada e se usuário tem acesso
+        shared_account_id = expense_data.get("shared_account_id")
+        if shared_account_id:
+            from app.accounts import check_account_access
+            if not check_account_access(shared_account_id, expense_data["user_id"], session, "member"):
+                raise HTTPException(status_code=403, detail="Acesso negado à conta compartilhada")
+        
         # Criar despesa
         expense = Expense(
             description=expense_data["description"],
@@ -390,7 +419,8 @@ async def create_expense(expense_data: dict, session: Session = Depends(get_sess
             cost_center_id=cost_center_id,
             category_id=category_id,
             transaction_date=expense_data.get("transaction_date", datetime.utcnow()),
-            is_installment=num_installments > 1  # CORREÇÃO: Usar num_installments
+            is_installment=num_installments > 1,
+            shared_account_id=shared_account_id
         )
         
         session.add(expense)
@@ -472,6 +502,15 @@ async def update_expense(expense_id: int, expense_data: dict, session: Session =
         if "payment_method" in expense_data:
             expense.payment_method = expense_data["payment_method"]
         
+        # Atualizar conta compartilhada se fornecido
+        if "shared_account_id" in expense_data:
+            shared_account_id = expense_data["shared_account_id"]
+            if shared_account_id:
+                from app.accounts import check_account_access
+                if not check_account_access(shared_account_id, expense.user_id, session, "member"):
+                    raise HTTPException(status_code=403, detail="Acesso negado à conta compartilhada")
+            expense.shared_account_id = shared_account_id
+        
         session.add(expense)
         session.commit()
         session.refresh(expense)
@@ -515,6 +554,7 @@ async def get_financial_overview(
     user_id: int,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    shared_account_id: Optional[int] = Query(None),
     session: Session = Depends(get_session)
 ):
     """Retorna visão financeira completa com projeção futura"""
@@ -525,12 +565,17 @@ async def get_financial_overview(
         end_dt = (start_dt + relativedelta(months=1)) - timedelta(days=1)
     
     try:
-        # Gastos do período (transações)
+        # Construir query base para despesas
         expenses_query = select(Expense).where(
             Expense.user_id == user_id,
             Expense.transaction_date >= start_dt,
             Expense.transaction_date <= end_dt
         )
+        
+        # Filtrar por conta compartilhada se especificado
+        if shared_account_id:
+            expenses_query = expenses_query.where(Expense.shared_account_id == shared_account_id)
+        
         expenses = session.exec(expenses_query).all()
         
         total_expenses = sum(exp.total_amount for exp in expenses)
@@ -542,6 +587,11 @@ async def get_financial_overview(
             Installment.due_date <= end_dt,
             Installment.status == PaymentStatus.PENDING
         )
+        
+        # Filtrar por conta compartilhada se especificado
+        if shared_account_id:
+            cash_outflow_query = cash_outflow_query.where(Expense.shared_account_id == shared_account_id)
+        
         cash_outflow_installments = session.exec(cash_outflow_query).all()
         
         total_cash_outflow = sum(inst.amount for inst in cash_outflow_installments)
@@ -552,14 +602,18 @@ async def get_financial_overview(
             month_start = (start_dt.replace(day=1) + relativedelta(months=i))
             month_end = (month_start + relativedelta(months=1)) - timedelta(days=1)
             
-            future_installments = session.exec(
-                select(Installment).join(Expense).where(
-                    Expense.user_id == user_id,
-                    Installment.due_date >= month_start,
-                    Installment.due_date <= month_end,
-                    Installment.status == PaymentStatus.PENDING
-                )
-            ).all()
+            future_installments_query = select(Installment).join(Expense).where(
+                Expense.user_id == user_id,
+                Installment.due_date >= month_start,
+                Installment.due_date <= month_end,
+                Installment.status == PaymentStatus.PENDING
+            )
+            
+            # Filtrar por conta compartilhada se especificado
+            if shared_account_id:
+                future_installments_query = future_installments_query.where(Expense.shared_account_id == shared_account_id)
+            
+            future_installments = session.exec(future_installments_query).all()
             
             future_amount = sum(inst.amount for inst in future_installments)
             future_projection.append({
@@ -575,14 +629,18 @@ async def get_financial_overview(
         ).all()
         
         for cc in cost_centers:
-            cc_expenses = session.exec(
-                select(Expense).where(
-                    Expense.user_id == user_id,
-                    Expense.cost_center_id == cc.id,
-                    Expense.transaction_date >= start_dt,
-                    Expense.transaction_date <= end_dt
-                )
-            ).all()
+            cc_expenses_query = select(Expense).where(
+                Expense.user_id == user_id,
+                Expense.cost_center_id == cc.id,
+                Expense.transaction_date >= start_dt,
+                Expense.transaction_date <= end_dt
+            )
+            
+            # Filtrar por conta compartilhada se especificado
+            if shared_account_id:
+                cc_expenses_query = cc_expenses_query.where(Expense.shared_account_id == shared_account_id)
+            
+            cc_expenses = session.exec(cc_expenses_query).all()
             
             cc_total = sum(exp.total_amount for exp in cc_expenses)
             if cc_total > 0:
@@ -605,7 +663,8 @@ async def get_financial_overview(
                 "installments_count": len(cash_outflow_installments)
             },
             "future_projection": future_projection,
-            "cost_centers": cost_centers_data
+            "cost_centers": cost_centers_data,
+            "shared_account_id": shared_account_id
         }
         
     except Exception as e:
@@ -618,6 +677,7 @@ async def get_cost_center_detail(
     cost_center_name: str,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    shared_account_id: Optional[int] = Query(None),
     session: Session = Depends(get_session)
 ):
     """Retorna detalhes de um centro de custo específico"""
@@ -640,16 +700,18 @@ async def get_cost_center_detail(
             raise HTTPException(status_code=404, detail="Centro de custo não encontrado")
         
         # Buscar despesas do centro de custo no período
-        expenses = session.exec(
-            select(Expense, Category)
-            .join(Category, Expense.category_id == Category.id)
-            .where(
-                Expense.user_id == user_id,
-                Expense.cost_center_id == cost_center.id,
-                Expense.transaction_date >= start_dt,
-                Expense.transaction_date <= end_dt
-            )
-        ).all()
+        expenses_query = select(Expense, Category).join(Category, Expense.category_id == Category.id).where(
+            Expense.user_id == user_id,
+            Expense.cost_center_id == cost_center.id,
+            Expense.transaction_date >= start_dt,
+            Expense.transaction_date <= end_dt
+        )
+        
+        # Filtrar por conta compartilhada se especificado
+        if shared_account_id:
+            expenses_query = expenses_query.where(Expense.shared_account_id == shared_account_id)
+        
+        expenses = session.exec(expenses_query).all()
         
         # Agrupar por categoria
         categories_data = {}
@@ -694,6 +756,7 @@ async def get_monthly_expenses(
     user_id: int,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    shared_account_id: Optional[int] = Query(None),
     session: Session = Depends(get_session)
 ):
     """Retorna todas as despesas do período"""
@@ -704,17 +767,21 @@ async def get_monthly_expenses(
         end_dt = (start_dt + relativedelta(months=1)) - timedelta(days=1)
     
     try:
-        expenses = session.exec(
-            select(Expense, CostCenter, Category)
-            .join(CostCenter, Expense.cost_center_id == CostCenter.id)
-            .join(Category, Expense.category_id == Category.id)
-            .where(
-                Expense.user_id == user_id,
-                Expense.transaction_date >= start_dt,
-                Expense.transaction_date <= end_dt
-            )
-            .order_by(Expense.transaction_date.desc())
-        ).all()
+        expenses_query = select(Expense, CostCenter, Category).join(
+            CostCenter, Expense.cost_center_id == CostCenter.id
+        ).join(
+            Category, Expense.category_id == Category.id
+        ).where(
+            Expense.user_id == user_id,
+            Expense.transaction_date >= start_dt,
+            Expense.transaction_date <= end_dt
+        )
+        
+        # Filtrar por conta compartilhada se especificado
+        if shared_account_id:
+            expenses_query = expenses_query.where(Expense.shared_account_id == shared_account_id)
+        
+        expenses = session.exec(expenses_query.order_by(Expense.transaction_date.desc())).all()
         
         result = []
         for expense, cost_center, category in expenses:
@@ -753,6 +820,7 @@ async def export_expenses_to_excel(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     cost_center: Optional[str] = Query(None),
+    shared_account_id: Optional[int] = Query(None),
     session: Session = Depends(get_session)
 ):
     """Exporta despesas para CSV/Excel"""
@@ -779,6 +847,10 @@ async def export_expenses_to_excel(
         if cost_center:
             query = query.where(CostCenter.name == cost_center)
         
+        # Aplicar filtro de conta compartilhada se fornecido
+        if shared_account_id:
+            query = query.where(Expense.shared_account_id == shared_account_id)
+        
         expenses = session.exec(query.order_by(Expense.transaction_date.desc())).all()
         
         # Criar CSV em memória
@@ -788,11 +860,16 @@ async def export_expenses_to_excel(
         # Cabeçalho
         writer.writerow([
             'Data', 'Centro de Custo', 'Categoria', 'Descrição', 
-            'Valor (R$)', 'Forma de Pagamento', 'Parcelas'
+            'Valor (R$)', 'Forma de Pagamento', 'Parcelas', 'Conta Compartilhada'
         ])
         
         # Dados
         for expense, cost_center_obj, category in expenses:
+            shared_account_name = "N/A"
+            if expense.shared_account_id:
+                shared_account = session.get(SharedAccount, expense.shared_account_id)
+                shared_account_name = shared_account.name if shared_account else "N/A"
+            
             writer.writerow([
                 expense.transaction_date.strftime('%d/%m/%Y'),
                 cost_center_obj.name,
@@ -800,7 +877,8 @@ async def export_expenses_to_excel(
                 expense.description,
                 f"R$ {expense.total_amount:.2f}",
                 expense.payment_method,
-                f"{len(expense.installments)}x" if expense.installments else "À vista"
+                f"{len(expense.installments)}x" if expense.installments else "À vista",
+                shared_account_name
             ])
         
         output.seek(0)
@@ -1020,6 +1098,10 @@ async def debug_user_setup(user_id: int, session: Session = Depends(get_session)
             select(Category).where(Category.user_id == user_id)
         ).all()
         
+        # Buscar contas compartilhadas
+        from app.accounts import get_user_accounts
+        shared_accounts = get_user_accounts(user_id, session)
+        
         return {
             "user": {
                 "id": user.id,
@@ -1029,7 +1111,8 @@ async def debug_user_setup(user_id: int, session: Session = Depends(get_session)
                 "onboarding_completed": user.onboarding_completed
             },
             "cost_centers": [{"id": cc.id, "name": cc.name} for cc in cost_centers],
-            "categories": [{"id": cat.id, "name": cat.name} for cat in categories]
+            "categories": [{"id": cat.id, "name": cat.name} for cat in categories],
+            "shared_accounts": shared_accounts
         }
         
     except Exception as e:
@@ -1045,6 +1128,9 @@ async def debug_database(session: Session = Depends(get_session)):
         categories_count = session.exec(select(func.count(Category.id))).first()
         expenses_count = session.exec(select(func.count(Expense.id))).first()
         installments_count = session.exec(select(func.count(Installment.id))).first()
+        shared_accounts_count = session.exec(select(func.count(SharedAccount.id))).first()
+        account_members_count = session.exec(select(func.count(AccountMember.id))).first()
+        account_invites_count = session.exec(select(func.count(AccountInvite.id))).first()
         
         # Listar algumas despesas
         expenses = session.exec(select(Expense).limit(5)).all()
@@ -1052,12 +1138,14 @@ async def debug_database(session: Session = Depends(get_session)):
         for expense in expenses:
             cost_center = session.get(CostCenter, expense.cost_center_id)
             category = session.get(Category, expense.category_id)
+            shared_account = session.get(SharedAccount, expense.shared_account_id) if expense.shared_account_id else None
             expenses_data.append({
                 "id": expense.id,
                 "description": expense.description,
                 "amount": expense.total_amount,
                 "cost_center": cost_center.name if cost_center else "N/A",
                 "category": category.name if category else "N/A",
+                "shared_account": shared_account.name if shared_account else "N/A",
                 "transaction_date": expense.transaction_date
             })
         
@@ -1068,7 +1156,10 @@ async def debug_database(session: Session = Depends(get_session)):
                 "cost_centers": cost_centers_count,
                 "categories": categories_count,
                 "expenses": expenses_count,
-                "installments": installments_count
+                "installments": installments_count,
+                "shared_accounts": shared_accounts_count,
+                "account_members": account_members_count,
+                "account_invites": account_invites_count
             },
             "recent_expenses": expenses_data
         }

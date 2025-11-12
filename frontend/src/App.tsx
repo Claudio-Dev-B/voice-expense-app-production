@@ -1,3 +1,4 @@
+// App.tsx
 import React, { useState, useEffect } from 'react';
 import GoogleAuth from './components/GoogleAuth';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -6,11 +7,12 @@ import MainApp from './components/MainApp';
 import { api, type OnboardingPayload } from './services/api';
 
 interface User {
+  id: number;
   email: string;
   name: string;
-  googleId: string;
-  onboardingCompleted?: boolean;
-  id?: number;
+  picture?: string;
+  onboarding_completed: boolean;
+  user_type: string;
 }
 
 // Dados padrão para onboarding
@@ -27,124 +29,94 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Verificar se usuário já está logado
-    const savedUser = localStorage.getItem('voiceexpense_user');
-    if (savedUser) {
-      try {
-        const userData = JSON.parse(savedUser);
-        setUser(userData);
-        checkUserOnboarding(userData);
-      } catch (err) {
-        console.error('Erro ao carregar usuário do localStorage:', err);
-        setLoading(false);
-      }
+    // Verificar se usuário já está logado (token JWT)
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      validateTokenAndLoadUser();
     } else {
       setLoading(false);
     }
   }, []);
 
-  const checkUserOnboarding = async (userData: User) => {
+  const validateTokenAndLoadUser = async () => {
     try {
-      // CORREÇÃO: Verificar se o backend está respondendo
-      try {
-        await api.healthCheck();
-      } catch (healthError) {
-        throw new Error('Backend não está respondendo. Verifique se o servidor está rodando na porta 8000.');
-      }
+      // Verificar se o backend está respondendo
+      await api.healthCheck();
       
-      // Buscar informações completas do usuário do backend
-      const userInfo = await api.getUserByEmail(userData.email);
+      // Buscar informações do usuário atual
+      const userResponse = await api.getUserInfo(1); // O backend vai usar o token JWT para identificar o usuário
       
-      if (userInfo.onboarding_completed) {
-        // Se já completou onboarding, buscar centros de custo e categorias
-        const fullUserInfo = await api.getUserInfo(userInfo.id);
-        
-        // Criar OnboardingData a partir das informações do usuário
+      const userData: User = {
+        id: userResponse.user.id,
+        email: userResponse.user.email,
+        name: userResponse.user.name,
+        picture: userResponse.user.picture,
+        onboarding_completed: userResponse.user.onboarding_completed,
+        user_type: userResponse.user.user_type
+      };
+      
+      setUser(userData);
+
+      // Se já completou onboarding, carregar dados
+      if (userResponse.user.onboarding_completed) {
         const existingOnboardingData: OnboardingData = {
-          userType: fullUserInfo.user_type as 'pessoal' | 'empresarial' | 'pessoal_empresarial',
-          costCenters: fullUserInfo.cost_centers?.map((cc: any) => cc.name) || ['Pessoal'],
-          categories: fullUserInfo.categories?.map((cat: any) => cat.name) || ['Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Educação', 'Entretenimento', 'Outros']
+          userType: userResponse.user.user_type as 'pessoal' | 'empresarial' | 'pessoal_empresarial',
+          costCenters: userResponse.cost_centers?.map((cc: any) => cc.name) || ['Pessoal'],
+          categories: userResponse.categories?.map((cat: any) => cat.name) || ['Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Educação', 'Entretenimento', 'Outros']
         };
         
         setOnboardingData(existingOnboardingData);
-        
-        // Atualizar usuário com informações do backend
-        const updatedUser = { 
-          ...userData, 
-          onboardingCompleted: true,
-          id: userInfo.id 
-        };
-        setUser(updatedUser);
-        localStorage.setItem('voiceexpense_user', JSON.stringify(updatedUser));
-      } else {
-        // Atualizar usuário com ID do backend
-        const updatedUser = { 
-          ...userData, 
-          id: userInfo.id,
-          onboardingCompleted: false 
-        };
-        setUser(updatedUser);
-        localStorage.setItem('voiceexpense_user', JSON.stringify(updatedUser));
       }
+      
     } catch (error) {
-      console.error('Erro ao verificar onboarding:', error);
-      setError(error instanceof Error ? error.message : 'Erro de conexão com o servidor');
-      // Usuário não existe ainda, manter dados padrão
-      const updatedUser = { 
-        ...userData, 
-        onboardingCompleted: false 
-      };
-      setUser(updatedUser);
-      localStorage.setItem('voiceexpense_user', JSON.stringify(updatedUser));
+      console.error('Erro ao validar token:', error);
+      // Token inválido ou expirado - limpar e redirecionar para login
+      localStorage.removeItem('access_token');
+      setError('Sessão expirada. Faça login novamente.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleLogin = async (userData: User) => {
+  const handleGoogleLogin = async (authData: any) => {
     try {
       setError(null);
       
-      // Verificar se o backend está respondendo
-      try {
-        await api.healthCheck();
-      } catch (healthError) {
-        throw new Error('Backend não está respondendo. Verifique se o servidor está rodando na porta 8000.');
-      }
-      
-      // Criar ou atualizar usuário no backend
-      const backendUser = await api.createOrUpdateUser({
-        email: userData.email,
-        name: userData.name,
-        google_id: userData.googleId
-      });
-      
-      // Atualizar usuário com dados do backend
-      const completeUser = {
-        ...userData,
-        id: backendUser.id,
-        onboardingCompleted: backendUser.onboarding_completed
+      // O GoogleAuth já salvou o token no localStorage e retornou os dados do usuário
+      const userData: User = {
+        id: authData.user.id,
+        email: authData.user.email,
+        name: authData.user.name,
+        picture: authData.user.picture,
+        onboarding_completed: authData.user.onboarding_completed,
+        user_type: authData.user.user_type
       };
       
-      setUser(completeUser);
-      localStorage.setItem('voiceexpense_user', JSON.stringify(completeUser));
-      
+      setUser(userData);
+
       // Se já completou onboarding, carregar dados
-      if (backendUser.onboarding_completed) {
-        await checkUserOnboarding(completeUser);
-      } else {
-        setLoading(false);
+      if (authData.user.onboarding_completed) {
+        try {
+          const userInfo = await api.getUserInfo(authData.user.id);
+          const existingOnboardingData: OnboardingData = {
+            userType: userInfo.user.user_type as 'pessoal' | 'empresarial' | 'pessoal_empresarial',
+            costCenters: userInfo.cost_centers?.map((cc: any) => cc.name) || ['Pessoal'],
+            categories: userInfo.categories?.map((cat: any) => cat.name) || ['Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Educação', 'Entretenimento', 'Outros']
+          };
+          
+          setOnboardingData(existingOnboardingData);
+        } catch (error) {
+          console.error('Erro ao carregar dados do usuário:', error);
+          // Manter dados padrão se não conseguir carregar
+        }
       }
+      
     } catch (error) {
       console.error('Erro no login:', error);
       setError(error instanceof Error ? error.message : 'Erro de conexão com o servidor');
-      // Fallback: usar dados locais se backend falhar
-      const fallbackUser = {
-        ...userData,
-        onboardingCompleted: false
-      };
-      setUser(fallbackUser);
-      localStorage.setItem('voiceexpense_user', JSON.stringify(fallbackUser));
+      // Limpar token em caso de erro
+      localStorage.removeItem('access_token');
+    } finally {
       setLoading(false);
     }
   };
@@ -172,17 +144,24 @@ const App: React.FC = () => {
       setOnboardingData(data);
       
       // Atualizar usuário local
-      const updatedUser = { ...user, onboardingCompleted: true };
+      const updatedUser = { 
+        ...user, 
+        onboarding_completed: true,
+        user_type: data.userType
+      };
       setUser(updatedUser);
-      localStorage.setItem('voiceexpense_user', JSON.stringify(updatedUser));
+      
     } catch (error) {
       console.error('Erro ao completar onboarding:', error);
       setError('Erro ao completar configuração. Tente novamente.');
       // Fallback: atualizar localmente mesmo se backend falhar
       setOnboardingData(data);
-      const updatedUser = { ...user, onboardingCompleted: true };
+      const updatedUser = { 
+        ...user, 
+        onboarding_completed: true,
+        user_type: data.userType
+      };
       setUser(updatedUser);
-      localStorage.setItem('voiceexpense_user', JSON.stringify(updatedUser));
     }
   };
 
@@ -190,13 +169,15 @@ const App: React.FC = () => {
     setUser(null);
     setOnboardingData(defaultOnboardingData);
     setError(null);
-    localStorage.removeItem('voiceexpense_user');
+    // Remover token JWT
+    localStorage.removeItem('access_token');
   };
 
   const handleRetry = () => {
     setError(null);
-    if (user) {
-      checkUserOnboarding(user);
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      validateTokenAndLoadUser();
     } else {
       setLoading(false);
     }
@@ -243,7 +224,7 @@ const App: React.FC = () => {
     return <GoogleAuth onSuccess={handleGoogleLogin} />;
   }
 
-  if (!user.onboardingCompleted) {
+  if (!user.onboarding_completed) {
     return (
       <OnboardingFlow 
         onComplete={handleOnboardingComplete} 

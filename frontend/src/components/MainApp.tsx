@@ -1,17 +1,20 @@
+// MainApp.tsx
 import React, { useState, useEffect } from "react";
-import type { Expense, TranscriptionResponse } from "../types";
+import type { Expense, TranscriptionResponse, SharedAccount } from "../types";
 import AudioRecorder from "./AudioRecorder";
 import ExpenseForm from "./ExpenseForm";
 import ExpenseHistory from "./ExpenseHistory";
 import Dashboard from "./Dashboard";
+import InviteShareModal from "./InviteShareModal";
 import { api } from "../services/api";
 
 interface User {
+  id: number;
   email: string;
   name: string;
-  googleId: string;
-  id?: number;
-  onboardingCompleted?: boolean;
+  picture?: string;
+  onboarding_completed: boolean;
+  user_type: string;
 }
 
 interface OnboardingData {
@@ -50,38 +53,44 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
   const [history, setHistory] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [userId, setUserId] = useState<number | null>(null);
   const [currentView, setCurrentView] = useState<'main' | 'dashboard'>('main');
+  const [sharedAccounts, setSharedAccounts] = useState<SharedAccount[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState<SharedAccount | null>(null);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [accountsLoading, setAccountsLoading] = useState(true);
 
-  // Carregar informações do usuário e despesas ao iniciar
+  // Carregar contas compartilhadas e despesas ao iniciar
   useEffect(() => {
-    loadUserData();
+    loadSharedAccounts();
   }, []);
 
-  // Carregar despesas sempre que o userId mudar
+  // Carregar despesas quando a conta selecionada mudar
   useEffect(() => {
-    if (userId) {
-      loadExpenses();
-    }
-  }, [userId]);
+    loadExpenses();
+  }, [selectedAccount]);
 
-  const loadUserData = async () => {
+  const loadSharedAccounts = async () => {
     try {
-      // Buscar ID do usuário pelo email
-      const userInfo = await api.getUserByEmail(user.email);
-      setUserId(userInfo.id);
+      setAccountsLoading(true);
+      const response = await api.getUserAccounts();
+      setSharedAccounts(response.accounts);
+      
+      // Selecionar primeira conta por padrão (ou conta pessoal se existir)
+      if (response.accounts.length > 0) {
+        const personalAccount = response.accounts.find(acc => acc.name === 'Pessoal');
+        setSelectedAccount(personalAccount || response.accounts[0]);
+      }
     } catch (err) {
-      console.error('Erro ao carregar dados do usuário:', err);
-      setError('Erro ao carregar dados do usuário');
+      console.error('Erro ao carregar contas compartilhadas:', err);
+    } finally {
+      setAccountsLoading(false);
     }
   };
 
   const loadExpenses = async () => {
-    if (!userId) return;
-    
     try {
-      // Buscar todas as despesas do backend
-      const expenses = await api.getExpenses(userId);
+      const sharedAccountId = selectedAccount?.id || undefined;
+      const expenses = await api.getExpenses(user.id, sharedAccountId);
       setHistory(expenses);
     } catch (err) {
       console.error('Erro ao carregar despesas:', err);
@@ -90,18 +99,12 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
   };
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
-    if (!userId) {
-      setError('Usuário não identificado. Faça login novamente.');
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
     
     try {
-      const result: TranscriptionResponse = await api.transcribeAudio(audioBlob, userId);
+      const result: TranscriptionResponse = await api.transcribeAudio(audioBlob, user.id);
       
-      // Usar total_amount em vez de amount (consistência com backend)
       const newExpense: Expense = {
         id: result.expense_id,
         description: result.description,
@@ -113,7 +116,9 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
         text: result.text,
         cost_center: result.cost_center,
         cost_center_id: undefined,
-        category_id: undefined
+        category_id: undefined,
+        shared_account_id: selectedAccount?.id,
+        shared_account_name: selectedAccount?.name
       };
 
       setCurrentExpense(newExpense);
@@ -133,7 +138,9 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
         text: "Transcrição falhou - preencha manualmente",
         cost_center: onboardingData.costCenters[0] || "Pessoal",
         cost_center_id: undefined,
-        category_id: undefined
+        category_id: undefined,
+        shared_account_id: selectedAccount?.id,
+        shared_account_name: selectedAccount?.name
       };
       setCurrentExpense(fallbackExpense);
     } finally {
@@ -142,8 +149,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
   };
 
   const handleConfirm = async (expense: Expense) => {
-    if (!userId) return;
-
     try {
       setError(null);
 
@@ -152,9 +157,10 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
         description: expense.description,
         total_amount: expense.total_amount,
         payment_method: expense.payment_method,
-        user_id: userId,
+        user_id: user.id,
         cost_center: expense.cost_center,
         category: expense.category,
+        shared_account_id: selectedAccount?.id,
         installments: expense.installments > 1 ? 
           Array.from({ length: expense.installments }, (_, i) => ({
             amount: expense.total_amount / expense.installments,
@@ -189,7 +195,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
         total_amount: updatedExpense.total_amount,
         payment_method: updatedExpense.payment_method,
         cost_center: updatedExpense.cost_center,
-        category: updatedExpense.category
+        category: updatedExpense.category,
+        shared_account_id: selectedAccount?.id
       };
 
       await api.updateExpense(updatedExpense.id, expenseData);
@@ -216,6 +223,17 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
     } catch (err) {
       console.error('Erro ao excluir despesa:', err);
       setError('Erro ao excluir despesa');
+    }
+  };
+
+  const handleCreateAccount = async (accountName: string) => {
+    try {
+      await api.createSharedAccount({ name: accountName });
+      await loadSharedAccounts();
+      setShowInviteModal(false);
+    } catch (err) {
+      console.error('Erro ao criar conta:', err);
+      setError('Erro ao criar conta compartilhada');
     }
   };
 
@@ -246,6 +264,14 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
               </div>
               
               <div className="flex items-center space-x-4">
+                <AccountSelector
+                  accounts={sharedAccounts}
+                  selectedAccount={selectedAccount}
+                  onSelectAccount={setSelectedAccount}
+                  loading={accountsLoading}
+                  onCreateAccount={() => setShowInviteModal(true)}
+                />
+                
                 <div className="text-right">
                   <p className="font-semibold text-gray-900">{user.name}</p>
                   <p className="text-sm text-gray-600">{user.email}</p>
@@ -262,9 +288,10 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
         </div>
 
         {/* Dashboard Content */}
-        {userId && (
-          <Dashboard userId={userId} />
-        )}
+        <Dashboard 
+          userId={user.id} 
+          sharedAccountId={selectedAccount?.id} 
+        />
       </div>
     );
   }
@@ -295,6 +322,14 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
             </div>
             
             <div className="flex items-center space-x-4">
+              <AccountSelector
+                accounts={sharedAccounts}
+                selectedAccount={selectedAccount}
+                onSelectAccount={setSelectedAccount}
+                loading={accountsLoading}
+                onCreateAccount={() => setShowInviteModal(true)}
+              />
+              
               <div className="text-right">
                 <p className="font-semibold text-gray-900">{user.name}</p>
                 <p className="text-sm text-gray-600">{user.email}</p>
@@ -325,6 +360,36 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
             <div className="mb-6 p-6 bg-white rounded-xl shadow-sm text-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
               <p className="text-gray-600 mt-2">Processando áudio...</p>
+            </div>
+          )}
+
+          {/* Indicador de conta selecionada */}
+          {selectedAccount && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <span className="text-blue-600 text-sm">🏢</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-blue-900">
+                      Conta: {selectedAccount.name}
+                    </p>
+                    <p className="text-sm text-blue-600">
+                      {selectedAccount.role === 'owner' ? '👑 Proprietário' : 
+                       selectedAccount.role === 'admin' ? '⚡ Administrador' : 
+                       selectedAccount.role === 'member' ? '👥 Membro' : '👀 Visualizador'}
+                      {selectedAccount.member_count > 1 && ` • ${selectedAccount.member_count} membros`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowInviteModal(true)}
+                  className="px-4 py-2 bg-white border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50 text-sm font-medium"
+                >
+                  👥 Gerenciar
+                </button>
+              </div>
             </div>
           )}
 
@@ -365,6 +430,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
                   expense={currentExpense}
                   costCenters={onboardingData.costCenters}
                   categories={onboardingData.categories}
+                  sharedAccounts={sharedAccounts}
+                  selectedAccount={selectedAccount}
                   onConfirm={handleConfirm}
                   onCancel={() => setCurrentExpense(null)}
                 />
@@ -377,6 +444,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
                 onDelete={handleDelete}
                 costCenters={onboardingData.costCenters}
                 categories={onboardingData.categories}
+                sharedAccountName={selectedAccount?.name}
               />
 
               {/* Empty State */}
@@ -389,7 +457,10 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
                     Nenhuma despesa registrada
                   </h3>
                   <p className="text-gray-500 text-sm">
-                    Suas despesas aparecerão aqui após a gravação por voz
+                    {selectedAccount 
+                      ? `Suas despesas de ${selectedAccount.name} aparecerão aqui` 
+                      : 'Suas despesas aparecerão aqui após a gravação por voz'
+                    }
                   </p>
                 </div>
               )}
@@ -397,6 +468,82 @@ const MainApp: React.FC<MainAppProps> = ({ user, onboardingData, onLogout }) => 
           </div>
         </div>
       </div>
+
+      {/* Modal de Gerenciamento de Contas */}
+      {showInviteModal && (
+        <InviteShareModal
+          accounts={sharedAccounts}
+          selectedAccount={selectedAccount}
+          onClose={() => setShowInviteModal(false)}
+          onAccountCreated={handleCreateAccount}
+          onAccountSelected={setSelectedAccount}
+          onAccountsUpdated={loadSharedAccounts}
+        />
+      )}
+    </div>
+  );
+};
+
+// Componente para seletor de contas
+interface AccountSelectorProps {
+  accounts: SharedAccount[];
+  selectedAccount: SharedAccount | null;
+  onSelectAccount: (account: SharedAccount) => void;
+  loading: boolean;
+  onCreateAccount: () => void;
+}
+
+const AccountSelector: React.FC<AccountSelectorProps> = ({
+  accounts,
+  selectedAccount,
+  onSelectAccount,
+  loading,
+  onCreateAccount
+}) => {
+  const [selectValue, setSelectValue] = useState(selectedAccount?.id?.toString() || '');
+
+  // Efeito para detectar quando o usuário seleciona "Nova conta..."
+  useEffect(() => {
+    if (selectValue === 'create') {
+      onCreateAccount();
+      // Reset para o valor anterior após criar a conta
+      setSelectValue(selectedAccount?.id?.toString() || '');
+    }
+  }, [selectValue, onCreateAccount, selectedAccount]);
+
+  if (loading) {
+    return (
+      <div className="w-48 bg-gray-100 rounded-lg py-2 px-3">
+        <div className="animate-pulse flex space-x-2">
+          <div className="w-4 h-4 bg-gray-300 rounded"></div>
+          <div className="flex-1 space-y-2">
+            <div className="h-4 bg-gray-300 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <select
+        value={selectValue}
+        onChange={(e) => {
+          setSelectValue(e.target.value);
+          if (e.target.value !== 'create') {
+            const account = accounts.find(acc => acc.id === parseInt(e.target.value));
+            if (account) onSelectAccount(account);
+          }
+        }}
+        className="w-48 px-3 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+      >
+        {accounts.map(account => (
+          <option key={account.id} value={account.id.toString()}>
+            {account.name} {account.role === 'owner' && '👑'}
+          </option>
+        ))}
+        <option value="create">+ Nova conta...</option>
+      </select>
     </div>
   );
 };
