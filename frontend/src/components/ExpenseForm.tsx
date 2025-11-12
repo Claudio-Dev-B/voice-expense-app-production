@@ -21,7 +21,7 @@ const ExpenseForm: React.FC<Props> = ({
   onConfirm, 
   onCancel 
 }) => {
-  // CORREÇÃO: Garantir que payment_method seja mapeado corretamente para o select
+  // Mapeamento para os métodos de pagamento
   const mapPaymentMethodToSelect = (paymentMethod: string): string => {
     const mapping: { [key: string]: string } = {
       'cartão crédito': 'Cartão Crédito',
@@ -48,31 +48,47 @@ const ExpenseForm: React.FC<Props> = ({
     return mapping[selectValue] || selectValue || 'indefinida';
   };
 
-  const [data, setData] = useState<Expense>({
+  const [formData, setFormData] = useState<Expense>({
     ...expense,
-    // CORREÇÃO: Mapear payment_method para o formato do select
     category: expense.category || categories[0] || "Outros",
     payment_method: mapPaymentMethodToSelect(expense.payment_method || "indefinida"),
     cost_center: expense.cost_center || costCenters[0] || "Pessoal",
     installments: expense.installments || 1,
     total_amount: expense.total_amount || 0,
-    shared_account_id: expense.shared_account_id || selectedAccount?.id,
-    shared_account_name: expense.shared_account_name || selectedAccount?.name
+    description: expense.description || ""
   });
+
+  const [errors, setErrors] = useState<{
+    description?: string;
+    total_amount?: string;
+  }>({});
 
   const paymentMethods = [
     "Dinheiro", "Cartão Crédito", "Cartão Débito", 
     "PIX", "Transferência", "Boleto", "Outros"
   ];
 
+  const validateForm = (): boolean => {
+    const newErrors: { description?: string; total_amount?: string } = {};
+
+    if (!formData.description.trim()) {
+      newErrors.description = "Descrição é obrigatória";
+    }
+
+    if (!formData.total_amount || formData.total_amount <= 0) {
+      newErrors.total_amount = "Valor deve ser maior que zero";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleConfirm = () => {
-    // CORREÇÃO: Mapear de volta para o formato do backend antes de enviar
+    if (!validateForm()) return;
+
     const expenseToConfirm = {
-      ...data,
-      payment_method: mapSelectToPaymentMethod(data.payment_method),
-      // Garantir que a conta compartilhada seja a selecionada
-      shared_account_id: selectedAccount?.id,
-      shared_account_name: selectedAccount?.name
+      ...formData,
+      payment_method: mapSelectToPaymentMethod(formData.payment_method)
     };
     onConfirm(expenseToConfirm);
   };
@@ -82,6 +98,33 @@ const ExpenseForm: React.FC<Props> = ({
       style: 'currency',
       currency: 'BRL'
     }).format(value);
+  };
+
+  const handleInputChange = (field: keyof Expense, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+
+    // Limpar erro do campo quando usuário começar a digitar
+    if (errors[field as keyof typeof errors]) {
+      setErrors(prev => ({
+        ...prev,
+        [field]: undefined
+      }));
+    }
+  };
+
+  const getRoleBadge = (role: string) => {
+    const roleConfig = {
+      owner: { label: 'Proprietário', emoji: '👑', color: 'text-purple-600' },
+      admin: { label: 'Administrador', emoji: '⚡', color: 'text-red-600' },
+      member: { label: 'Membro', emoji: '👥', color: 'text-blue-600' },
+      viewer: { label: 'Visualizador', emoji: '👀', color: 'text-gray-600' }
+    };
+
+    const config = roleConfig[role as keyof typeof roleConfig] || roleConfig.viewer;
+    return `${config.emoji} ${config.label}`;
   };
 
   return (
@@ -108,37 +151,59 @@ const ExpenseForm: React.FC<Props> = ({
                 Esta despesa será salva na conta: {selectedAccount.name}
               </p>
               <p className="text-xs text-blue-600">
-                {selectedAccount.role === 'owner' ? '👑 Proprietário' : 
-                 selectedAccount.role === 'admin' ? '⚡ Administrador' : 
-                 selectedAccount.role === 'member' ? '👥 Membro' : '👀 Visualizador'}
+                {getRoleBadge(selectedAccount.role)}
               </p>
             </div>
           </div>
         </div>
       )}
 
+      {/* Lista de contas compartilhadas disponíveis */}
+      {sharedAccounts.length > 0 && !selectedAccount && (
+        <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-xl">
+          <h3 className="font-semibold text-gray-900 text-sm mb-2">
+            Contas Compartilhadas Disponíveis
+          </h3>
+          <div className="space-y-2">
+            {sharedAccounts.map(account => (
+              <div key={account.id} className="flex items-center justify-between p-2 bg-white rounded-lg">
+                <span className="text-sm font-medium">{account.name}</span>
+                <span className="text-xs text-gray-500">
+                  {getRoleBadge(account.role)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
+        {/* Descrição */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Descrição
+            Descrição *
           </label>
           <input
-            className="input-field"
+            className={`input-field ${errors.description ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
             placeholder="Ex: Compra de insumos para restaurante"
-            value={data.description}
-            onChange={(e) => setData({ ...data, description: e.target.value })}
+            value={formData.description}
+            onChange={(e) => handleInputChange('description', e.target.value)}
           />
+          {errors.description && (
+            <p className="text-red-600 text-sm mt-1">{errors.description}</p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Centro de Custo */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Centro de Custo
             </label>
             <select
               className="input-field"
-              value={data.cost_center}
-              onChange={(e) => setData({ ...data, cost_center: e.target.value })}
+              value={formData.cost_center}
+              onChange={(e) => handleInputChange('cost_center', e.target.value)}
             >
               {costCenters.map(center => (
                 <option key={center} value={center}>{center}</option>
@@ -146,14 +211,15 @@ const ExpenseForm: React.FC<Props> = ({
             </select>
           </div>
 
+          {/* Categoria */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Categoria
             </label>
             <select
               className="input-field"
-              value={data.category}
-              onChange={(e) => setData({ ...data, category: e.target.value })}
+              value={formData.category}
+              onChange={(e) => handleInputChange('category', e.target.value)}
             >
               {categories.map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
@@ -163,38 +229,39 @@ const ExpenseForm: React.FC<Props> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Valor Total */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Valor Total (R$)
+              Valor Total (R$) *
             </label>
             <input
-              className="input-field"
+              className={`input-field ${errors.total_amount ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''}`}
               placeholder="0,00"
               type="number"
               step="0.01"
               min="0"
-              value={data.total_amount}
-              onChange={(e) =>
-                setData({ ...data, total_amount: parseFloat(e.target.value) || 0 })
-              }
+              value={formData.total_amount}
+              onChange={(e) => handleInputChange('total_amount', parseFloat(e.target.value) || 0)}
             />
-            {data.total_amount > 0 && (
+            {formData.total_amount > 0 && (
               <p className="text-sm text-gray-600 mt-1">
-                {formatCurrency(data.total_amount)}
+                {formatCurrency(formData.total_amount)}
               </p>
+            )}
+            {errors.total_amount && (
+              <p className="text-red-600 text-sm mt-1">{errors.total_amount}</p>
             )}
           </div>
 
+          {/* Forma de Pagamento */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Forma de Pagamento
             </label>
             <select
               className="input-field"
-              value={data.payment_method}
-              onChange={(e) =>
-                setData({ ...data, payment_method: e.target.value })
-              }
+              value={formData.payment_method}
+              onChange={(e) => handleInputChange('payment_method', e.target.value)}
             >
               {paymentMethods.map(method => (
                 <option key={method} value={method}>{method}</option>
@@ -203,109 +270,34 @@ const ExpenseForm: React.FC<Props> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Número de Parcelas
-            </label>
-            <input
-              className="input-field"
-              placeholder="1"
-              type="number"
-              min="1"
-              max="24"
-              value={data.installments}
-              onChange={(e) =>
-                setData({ ...data, installments: parseInt(e.target.value) || 1 })
-              }
-            />
-            {data.installments > 1 && data.total_amount > 0 && (
-              <p className="text-sm text-gray-600 mt-1">
-                {data.installments}x de {formatCurrency(data.total_amount / data.installments)}
-              </p>
-            )}
-          </div>
-
-          {/* Campo para conta compartilhada (somente leitura) */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Conta Compartilhada
-            </label>
-            <div className="input-field bg-gray-50 text-gray-600">
-              {selectedAccount ? (
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm">🏢</span>
-                  <span>{selectedAccount.name}</span>
-                  <span className={`px-2 py-1 rounded-full text-xs ${
-                    selectedAccount.role === 'owner' ? 'bg-purple-100 text-purple-800' :
-                    selectedAccount.role === 'admin' ? 'bg-red-100 text-red-800' :
-                    selectedAccount.role === 'member' ? 'bg-blue-100 text-blue-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {selectedAccount.role === 'owner' ? 'Proprietário' :
-                     selectedAccount.role === 'admin' ? 'Admin' :
-                     selectedAccount.role === 'member' ? 'Membro' : 'Visualizador'}
-                  </span>
-                </div>
-              ) : (
-                <span className="text-sm text-gray-500">Conta pessoal</span>
-              )}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Para mudar a conta, use o seletor no cabeçalho
+        {/* Parcelas */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Número de Parcelas
+          </label>
+          <input
+            className="input-field"
+            placeholder="1"
+            type="number"
+            min="1"
+            max="24"
+            value={formData.installments}
+            onChange={(e) => handleInputChange('installments', parseInt(e.target.value) || 1)}
+          />
+          {formData.installments > 1 && formData.total_amount > 0 && (
+            <p className="text-sm text-gray-600 mt-1">
+              {formData.installments}x de {formatCurrency(formData.total_amount / formData.installments)}
             </p>
-          </div>
+          )}
         </div>
-
-        {/* Resumo da despesa */}
-        {(data.description || data.total_amount > 0) && (
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <h4 className="font-semibold text-gray-900 mb-3 text-sm">📋 Resumo da Despesa</h4>
-            <div className="space-y-2 text-sm">
-              {data.description && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Descrição:</span>
-                  <span className="font-medium text-gray-900">{data.description}</span>
-                </div>
-              )}
-              {data.total_amount > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Valor:</span>
-                  <span className="font-semibold text-blue-600">{formatCurrency(data.total_amount)}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-gray-600">Centro de Custo:</span>
-                <span className="font-medium text-gray-900">{data.cost_center}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Categoria:</span>
-                <span className="font-medium text-gray-900">{data.category}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Pagamento:</span>
-                <span className="font-medium text-gray-900">{data.payment_method}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Parcelas:</span>
-                <span className="font-medium text-gray-900">{data.installments}x</span>
-              </div>
-              {selectedAccount && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Conta:</span>
-                  <span className="font-medium text-gray-900">{selectedAccount.name}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
+      {/* Botões de ação */}
       <div className="flex space-x-3 mt-6">
         <button
           className="btn-primary flex-1"
           onClick={handleConfirm}
-          disabled={!data.description.trim() || data.total_amount <= 0}
+          disabled={!formData.description.trim() || formData.total_amount <= 0}
         >
           Confirmar Despesa
         </button>
@@ -318,7 +310,7 @@ const ExpenseForm: React.FC<Props> = ({
       </div>
 
       {/* Mensagem de validação */}
-      {(!data.description.trim() || data.total_amount <= 0) && (
+      {(!formData.description.trim() || formData.total_amount <= 0) && (
         <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
           <p className="text-sm text-yellow-800">
             ⚠️ Preencha a descrição e um valor maior que zero para confirmar a despesa.
