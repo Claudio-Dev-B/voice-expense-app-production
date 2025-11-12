@@ -2,26 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalar dependências do sistema para áudio
-RUN apt-get update && apt-get install -y \
+# Instalar apenas dependências essenciais em uma única camada
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Copiar backend
+# Copiar apenas requirements primeiro (para cache)
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Instalar dependências Python sem cache
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copiar aplicação
 COPY backend/app ./app
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check simplificado
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
 
-# Expor porta
 EXPOSE 8000
 
-# Comando de inicialização
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

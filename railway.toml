@@ -1,7 +1,10 @@
+[build]
+builder = "dockerfile"
+
 [deploy]
 startCommand = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 
 [variables]
 ENVIRONMENT = "production"
-WHISPER_MODEL = "base" 
+WHISPER_MODEL = "base"
 MAX_UPLOAD_MB = "10"
