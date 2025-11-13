@@ -1,5 +1,5 @@
-// components/GoogleAuth.tsx - VERSÃO COM LOCALSTORAGE EVENTS
-import React, { useEffect } from 'react';
+// components/GoogleAuth.tsx - SOLUÇÃO DEFINITIVA
+import React, { useState, useEffect } from 'react';
 
 interface User {
   id: number;
@@ -12,212 +12,80 @@ interface User {
 
 interface GoogleAuthProps {
   onSuccess: (authData: { user: User; token: string }) => void;
+  onError: (error: string) => void;
 }
 
-const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess }) => {
-  // ✅ NOVO: Escutar eventos de localStorage
+const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  // ✅ Listen for auth redirects
   useEffect(() => {
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === 'voiceexpense_auth_result' && event.newValue) {
-        try {
-          console.log('📨 Evento de localStorage recebido:', event.newValue);
-          const authData = JSON.parse(event.newValue);
-          
-          if (authData.type === 'GOOGLE_AUTH_SUCCESS') {
-            console.log('✅ Auth success via localStorage event');
-            localStorage.setItem('access_token', authData.token);
-            localStorage.removeItem('voiceexpense_auth_result');
-            
-            onSuccess({
-              user: authData.user,
-              token: authData.token
-            });
-          }
-        } catch (error) {
-          console.error('Erro ao processar evento de storage:', error);
-        }
+    const handleAuthRedirect = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token');
+      const error = urlParams.get('error');
+      const user_id = urlParams.get('user_id');
+
+      if (token && user_id) {
+        console.log('✅ Auth redirect success detected');
+        handleAuthSuccess(token, user_id);
+      } else if (error) {
+        console.error('❌ Auth redirect error:', error);
+        onError(`Authentication failed: ${error}`);
       }
     };
 
-    // Escutar eventos de storage (funciona entre abas/popups)
-    window.addEventListener('storage', handleStorageChange);
-    
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, [onSuccess]);
+    handleAuthRedirect();
+  }, [onSuccess, onError]);
 
-  const checkAuthStatus = async (): Promise<boolean> => {
+  const handleAuthSuccess = async (token: string, userId: string) => {
     try {
-      console.log('🔄 Verificando status de autenticação...');
-      const token = localStorage.getItem('access_token');
+      setIsAuthenticating(true);
       
-      if (token) {
-        console.log('✅ Token encontrado no localStorage');
-        return true;
+      const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://voice-expense-app-production-production.up.railway.app';
+      
+      // Verify token and get user info
+      const response = await fetch(`${API_BASE_URL}/api/auth/verify?token=${token}`);
+      
+      if (!response.ok) {
+        throw new Error('Token verification failed');
       }
-      return false;
+
+      const data = await response.json();
+      
+      // Save token
+      localStorage.setItem('access_token', token);
+      
+      console.log('✅ Authentication completed successfully');
+      onSuccess({
+        user: data.user,
+        token: token
+      });
+
     } catch (error) {
-      console.error('Erro ao verificar auth status:', error);
-      return false;
+      console.error('❌ Auth success handling failed:', error);
+      onError('Failed to complete authentication');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
   const handleGoogleLogin = async () => {
-    let popupCheckInterval: number | null = null;
-    let popupTimeout: number | null = null;
-
     try {
-      console.log('🚀 Iniciando autenticação Google...');
-      
+      if (isAuthenticating) return;
+
+      console.log('🚀 Starting Google authentication...');
+      setIsAuthenticating(true);
+
       const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://voice-expense-app-production-production.up.railway.app';
-      console.log('🔗 API URL:', API_BASE_URL);
       
-      // Verificar se já está autenticado
-      const isAlreadyAuthenticated = await checkAuthStatus();
-      if (isAlreadyAuthenticated) {
-        console.log('ℹ️ Usuário já autenticado');
-        return;
-      }
-
-      // ✅ NOVA ESTRATÉGIA: Usar uma nova aba em vez de popup
-      const width = 500;
-      const height = 600;
-      const left = (window.screen.width - width) / 2;
-      const top = (window.screen.height - height) / 2;
-      
-      const authUrl = `${API_BASE_URL}/api/auth/google/login`;
-      console.log('📋 URL de autenticação:', authUrl);
-      
-      const authWindow = window.open(
-        authUrl,
-        'google_auth',
-        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
-      );
-
-      if (!authWindow) {
-        alert('❌ Popup bloqueado! Por favor, permita popups para este site.');
-        return;
-      }
-
-      // ✅ ESTRATÉGIA MISTA: postMessage + localStorage events
-      const handleMessage = (event: MessageEvent) => {
-        console.log('📨 Mensagem recebida de:', event.origin, event.data);
-
-        // Aceitar de qualquer origem para teste
-        if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
-          processAuthSuccess(event.data);
-        }
-      };
-
-      window.addEventListener('message', handleMessage);
-
-      // Verificar se a janela foi fechada
-      popupCheckInterval = window.setInterval(() => {
-        if (authWindow.closed) {
-          console.log('🔒 Popup fechado, verificando resultado...');
-          checkAuthResult();
-        }
-      }, 1000);
-
-      // Timeout de segurança
-      popupTimeout = window.setTimeout(() => {
-        if (authWindow && !authWindow.closed) {
-          console.log('⏰ Timeout - fechando popup');
-          authWindow.close();
-        }
-        cleanup();
-      }, 120000);
-
-      const cleanup = () => {
-        window.removeEventListener('message', handleMessage);
-        if (popupCheckInterval) clearInterval(popupCheckInterval);
-        if (popupTimeout) clearTimeout(popupTimeout);
-      };
-
-      const processAuthSuccess = (authData: any) => {
-        console.log('✅ Auth success via postMessage');
-        localStorage.setItem('access_token', authData.token);
-        cleanup();
-        onSuccess({
-          user: authData.user,
-          token: authData.token
-        });
-      };
-
-      const checkAuthResult = () => {
-        console.log('🔍 Verificando resultado da autenticação...');
-        
-        // Verificar localStorage após popup fechar
-        const authResult = localStorage.getItem('voiceexpense_auth_result');
-        const authData = localStorage.getItem('voiceexpense_auth_data');
-        
-        if (authResult) {
-          try {
-            const result = JSON.parse(authResult);
-            if (result.type === 'GOOGLE_AUTH_SUCCESS') {
-              console.log('✅ Auth success via localStorage check');
-              localStorage.setItem('access_token', result.token);
-              localStorage.removeItem('voiceexpense_auth_result');
-              cleanup();
-              onSuccess({
-                user: result.user,
-                token: result.token
-              });
-              return;
-            }
-          } catch (error) {
-            console.error('Erro ao processar auth result:', error);
-          }
-        }
-
-        if (authData) {
-          try {
-            const data = JSON.parse(authData);
-            if (data.type === 'GOOGLE_AUTH_SUCCESS') {
-              console.log('✅ Auth success via auth_data fallback');
-              localStorage.setItem('access_token', data.token);
-              localStorage.removeItem('voiceexpense_auth_data');
-              cleanup();
-              onSuccess({
-                user: data.user,
-                token: data.token
-              });
-              return;
-            }
-          } catch (error) {
-            console.error('Erro ao processar auth data:', error);
-          }
-        }
-
-        // Se não encontrou nada, verificar token diretamente
-        const token = localStorage.getItem('access_token');
-        if (token) {
-          console.log('✅ Token encontrado diretamente no localStorage');
-          cleanup();
-          // Precisamos buscar informações do usuário
-          fetchUserInfo(token);
-        } else {
-          console.log('❌ Nenhum método de auth funcionou');
-          cleanup();
-        }
-      };
-
-      const fetchUserInfo = async (token: string) => {
-        try {
-          // Tentar buscar informações do usuário com o token
-          console.log('🔍 Buscando informações do usuário...');
-          // Isso precisaria de um endpoint no backend
-          // Por enquanto, vamos mostrar erro
-          alert('Autenticação incompleta. Por favor, tente novamente.');
-        } catch (error) {
-          console.error('Erro ao buscar user info:', error);
-        }
-      };
+      // ✅ Open auth in same tab (no popup issues)
+      window.location.href = `${API_BASE_URL}/api/auth/google/login`;
 
     } catch (error) {
-      console.error('💥 Erro crítico no login Google:', error);
-      alert('Erro ao conectar com Google. Tente novamente.');
+      console.error('❌ Google login error:', error);
+      onError('Failed to start authentication');
+      setIsAuthenticating(false);
     }
   };
 
@@ -237,31 +105,32 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess }) => {
 
         <button
           onClick={handleGoogleLogin}
-          className="w-full bg-white border border-gray-300 rounded-xl py-4 px-4 flex items-center justify-center space-x-3 hover:bg-gray-50 transition-all duration-200 shadow-sm hover:shadow-md mb-4"
+          disabled={isAuthenticating}
+          className="w-full bg-white border border-gray-300 rounded-xl py-4 px-4 flex items-center justify-center space-x-3 hover:bg-gray-50 transition-all duration-200 shadow-sm hover:shadow-md mb-4 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center">
-            <span className="text-white text-sm font-bold">G</span>
-          </div>
-          <span className="font-medium text-gray-700">Entrar com Google</span>
+          {isAuthenticating ? (
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+          ) : (
+            <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center">
+              <span className="text-white text-sm font-bold">G</span>
+            </div>
+          )}
+          <span className="font-medium text-gray-700">
+            {isAuthenticating ? 'Processando...' : 'Entrar com Google'}
+          </span>
         </button>
 
-        <p className="text-xs text-gray-500 mb-4">
+        <p className="text-xs text-gray-500">
           Ao continuar, você concorda com nossos Termos de Serviço
         </p>
 
-        {/* Informações do sistema */}
-        <div className="space-y-2 text-xs">
-          <div className="p-2 bg-blue-50 rounded-lg text-blue-700">
-            <p>🔄 Sistema de autenticação melhorado</p>
-            <p>Múltiplas estratégias de fallback</p>
+        {isAuthenticating && (
+          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+            <p className="text-sm text-blue-700">
+              🔄 Redirecionando para autenticação...
+            </p>
           </div>
-          {import.meta.env.DEV && (
-            <div className="p-2 bg-yellow-50 rounded-lg text-yellow-700">
-              <p>🔧 Modo desenvolvimento</p>
-              <p>API: {import.meta.env.VITE_API_URL}</p>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
