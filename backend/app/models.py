@@ -1,17 +1,20 @@
-# backend/app/models.py
-from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, List, TYPE_CHECKING
+# backend/app/models.py - VERSÃO SIMPLIFICADA
+from sqlmodel import SQLModel, Field
+from typing import Optional
 from datetime import datetime
 from enum import Enum
-
-if TYPE_CHECKING:
-    from .models import AccountInvite, AccountMember
 
 class UserType(str, Enum):
     PERSONAL = "pessoal"
     BUSINESS = "empresarial" 
     MIXED = "pessoal_empresarial"
 
+class PaymentStatus(str, Enum):
+    PENDING = "pending"
+    PAID = "paid" 
+    OVERDUE = "overdue"
+
+# Modelos básicos SEM relacionamentos complexos
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     email: str = Field(unique=True, index=True)
@@ -21,20 +24,6 @@ class User(SQLModel, table=True):
     user_type: UserType = Field(default=UserType.PERSONAL)
     onboarding_completed: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relacionamentos - CORREÇÃO: especificar foreign_keys
-    cost_centers: List["CostCenter"] = Relationship(back_populates="user")
-    categories: List["Category"] = Relationship(back_populates="user") 
-    expenses: List["Expense"] = Relationship(back_populates="user")
-    
-    # Convites enviados - CORREÇÃO: especificar foreign_key
-    sent_invites: List["AccountInvite"] = Relationship(
-        back_populates="inviter",
-        sa_relationship_kwargs={"foreign_keys": "AccountInvite.created_by"}
-    )
-    
-    # Contas onde é membro
-    account_memberships: List["AccountMember"] = Relationship(back_populates="user")
 
 class CostCenter(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -42,18 +31,18 @@ class CostCenter(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     is_personal: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    user: User = Relationship(back_populates="cost_centers")
-    expenses: List["Expense"] = Relationship(back_populates="cost_center")
 
 class Category(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     user_id: int = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    user: User = Relationship(back_populates="categories")
-    expenses: List["Expense"] = Relationship(back_populates="category")
+
+class SharedAccount(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    owner_id: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Expense(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -66,17 +55,6 @@ class Expense(SQLModel, table=True):
     transaction_date: datetime = Field(default_factory=datetime.utcnow)
     is_installment: bool = False
     shared_account_id: Optional[int] = Field(default=None, foreign_key="sharedaccount.id")
-    
-    user: User = Relationship(back_populates="expenses")
-    cost_center: "CostCenter" = Relationship(back_populates="expenses")
-    category: "Category" = Relationship(back_populates="expenses")
-    installments: List["Installment"] = Relationship(back_populates="expense")
-    shared_account: Optional["SharedAccount"] = Relationship(back_populates="expenses")
-
-class PaymentStatus(str, Enum):
-    PENDING = "pending"
-    PAID = "paid"
-    OVERDUE = "overdue"
 
 class Installment(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -85,31 +63,15 @@ class Installment(SQLModel, table=True):
     due_date: datetime
     status: PaymentStatus = Field(default=PaymentStatus.PENDING)
     installment_number: int = Field(ge=1)
-    month_reference: str  # Formato YYYY-MM
+    month_reference: str
     paid_at: Optional[datetime] = None
-    
-    expense: Expense = Relationship(back_populates="installments")
-
-class SharedAccount(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    owner_id: int = Field(foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    owner: User = Relationship()  # Dono da conta
-    members: List["AccountMember"] = Relationship(back_populates="account")
-    invites: List["AccountInvite"] = Relationship(back_populates="account")
-    expenses: List["Expense"] = Relationship(back_populates="shared_account")
 
 class AccountMember(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     account_id: int = Field(foreign_key="sharedaccount.id")
     user_id: int = Field(foreign_key="user.id")
-    role: str = Field(default="member")  # owner, admin, member, viewer
+    role: str = Field(default="member")
     joined_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    account: SharedAccount = Relationship(back_populates="members")
-    user: User = Relationship(back_populates="account_memberships")
 
 class AccountInvite(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -117,14 +79,8 @@ class AccountInvite(SQLModel, table=True):
     email: str
     token: str = Field(unique=True, index=True)
     role: str = Field(default="member")
-    created_by: int = Field(foreign_key="user.id")  # CORREÇÃO: foreign_key explícita
-    status: str = Field(default="pending")  # pending, accepted, cancelled, expired
+    created_by: int = Field(foreign_key="user.id")
+    status: str = Field(default="pending")
     expires_at: datetime
     created_at: datetime = Field(default_factory=datetime.utcnow)
     accepted_at: Optional[datetime] = None
-    
-    account: SharedAccount = Relationship(back_populates="invites")
-    inviter: User = Relationship(
-        back_populates="sent_invites",
-        sa_relationship_kwargs={"foreign_keys": [created_by]}
-    )
