@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copiar requirements primeiro
 COPY backend/requirements.txt .
 
-# Instalar dependências CORE
+# Instalar dependências CORE (ADICIONE PyJWT AQUI)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir \
     fastapi==0.115.5 \
@@ -23,7 +23,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
     python-dateutil==2.9.0.post0 \
     pydantic==2.9.2 \
     python-multipart==0.0.9 \
-    requests==2.32.3
+    requests==2.32.3 \
+    pyjwt==2.8.0 \
+    cryptography==42.0.8
 
 # Instalar whisper
 RUN pip install --no-cache-dir \
@@ -36,6 +38,9 @@ COPY backend/app/ ./app/
 # Baixar modelo whisper base
 RUN python -c "import whisper; whisper.load_model('base')" && \
     echo "Whisper base model loaded successfully"
+
+# TESTAR se PyJWT está instalado (ADICIONE ESTA LINHA)
+RUN python -c "import jwt; print('PyJWT instalado com sucesso!')"
 
 EXPOSE 8000
 
