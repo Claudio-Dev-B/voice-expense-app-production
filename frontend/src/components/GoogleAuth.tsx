@@ -1,4 +1,4 @@
-// components/GoogleAuth.tsx - VERSÃO CORRIGIDA
+// components/GoogleAuth.tsx - VERSÃO ATUALIZADA
 import React, { useState, useEffect } from 'react';
 
 interface User {
@@ -18,95 +18,92 @@ interface GoogleAuthProps {
 const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // ✅ Listen for auth redirects
+  // Listen for auth redirects
   useEffect(() => {
-    const handleAuthRedirect = () => {
+    const checkAuthStatus = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const token = urlParams.get('token');
-      const error = urlParams.get('error');
-      const user_id = urlParams.get('user_id');
+      const authSuccess = urlParams.get('auth_success');
+      const authError = urlParams.get('auth_error');
 
-      console.log('🔍 Verificando parâmetros de auth:', { token, error, user_id });
-
-      if (token && user_id) {
-        console.log('✅ Auth redirect success detected');
-        handleAuthSuccess(token);
-      } else if (error) {
-        console.error('❌ Auth redirect error:', error);
-        onError(`Authentication failed: ${error}`);
-        
-        // Clean URL parameters
-        window.history.replaceState({}, document.title, window.location.pathname);
+      if (authSuccess === 'true' && token) {
+        console.log('✅ Auth success detected');
+        await handleAuthSuccess(token);
+      } else if (authError) {
+        console.error('❌ Auth error:', authError);
+        handleAuthError(authError);
       }
     };
 
-    handleAuthRedirect();
-  }, [onSuccess, onError]);
+    checkAuthStatus();
+  }, []);
 
-  // ✅ CORREÇÃO: Removido parâmetro userId não utilizado
   const handleAuthSuccess = async (token: string) => {
     try {
       setIsAuthenticating(true);
-      console.log('🔄 Processando token de autenticação...');
       
       const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://voice-expense-app-production-production.up.railway.app';
       
       // Verify token and get user info
-      console.log('🔐 Verificando token no backend...');
       const response = await fetch(`${API_BASE_URL}/api/auth/verify?token=${token}`);
       
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Token verification failed:', response.status, errorText);
         throw new Error('Token verification failed');
       }
 
       const data = await response.json();
-      console.log('✅ Token verificado, dados do usuário:', data.user.email);
       
       // Save token
       localStorage.setItem('access_token', token);
-      console.log('💾 Token salvo no localStorage');
       
-      // Clean URL parameters
+      // Clean URL
       window.history.replaceState({}, document.title, window.location.pathname);
       
-      console.log('✅ Authentication completed successfully');
       onSuccess({
         user: data.user,
         token: token
       });
 
     } catch (error) {
-      console.error('❌ Auth success handling failed:', error);
-      onError('Failed to complete authentication');
-      
-      // Clean URL parameters on error too
-      window.history.replaceState({}, document.title, window.location.pathname);
+      console.error('Auth success handling failed:', error);
+      onError('Falha ao completar autenticação');
     } finally {
       setIsAuthenticating(false);
     }
   };
 
+  const handleAuthError = (errorCode: string) => {
+    const errorMessages: { [key: string]: string } = {
+      'invalid_state': 'Sessão de autenticação inválida',
+      'state_reused': 'Sessão já utilizada',
+      'no_code': 'Código de autorização não recebido',
+      'misconfigured': 'App não configurado corretamente',
+      'token_failed': 'Falha na autenticação',
+      'user_info': 'Não foi possível obter informações do usuário',
+      'server_error': 'Erro no servidor',
+      'access_denied': 'Acesso negado pelo Google'
+    };
+
+    const errorMessage = errorMessages[errorCode] || `Erro de autenticação: ${errorCode}`;
+    onError(errorMessage);
+    
+    // Clean URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+  };
+
   const handleGoogleLogin = async () => {
     try {
-      if (isAuthenticating) {
-        console.log('⚠️ Autenticação já em andamento');
-        return;
-      }
+      if (isAuthenticating) return;
 
-      console.log('🚀 Starting Google authentication...');
       setIsAuthenticating(true);
-
       const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://voice-expense-app-production-production.up.railway.app';
       
-      // ✅ Open auth in same tab (no popup issues)
-      console.log('🔗 Redirecionando para:', `${API_BASE_URL}/api/auth/google/login`);
+      // Redirect to backend auth endpoint
       window.location.href = `${API_BASE_URL}/api/auth/google/login`;
 
     } catch (error) {
-      console.error('❌ Google login error:', error);
-      onError('Failed to start authentication');
+      console.error('Google login error:', error);
+      onError('Falha ao iniciar autenticação');
       setIsAuthenticating(false);
     }
   };
@@ -118,17 +115,13 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
           <span className="text-3xl">🎤</span>
         </div>
         
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          VoiceExpense
-        </h1>
-        <p className="text-gray-600 mb-8">
-          Controle suas despesas por voz de forma inteligente
-        </p>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">VoiceExpense</h1>
+        <p className="text-gray-600 mb-8">Controle suas despesas por voz</p>
 
         <button
           onClick={handleGoogleLogin}
           disabled={isAuthenticating}
-          className="w-full bg-white border border-gray-300 rounded-xl py-4 px-4 flex items-center justify-center space-x-3 hover:bg-gray-50 transition-all duration-200 shadow-sm hover:shadow-md mb-4 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-white border border-gray-300 rounded-xl py-4 px-4 flex items-center justify-center space-x-3 hover:bg-gray-50 transition-all duration-200 shadow-sm hover:shadow-md mb-4 disabled:opacity-50"
         >
           {isAuthenticating ? (
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
@@ -142,30 +135,9 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
           </span>
         </button>
 
-        <p className="text-xs text-gray-500 mb-4">
-          Ao continuar, você concorda com nossos Termos de Serviço
+        <p className="text-xs text-gray-500">
+          Ao continuar, você concorda com nossos Termos
         </p>
-
-        {isAuthenticating && (
-          <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-            <p className="text-sm text-blue-700">
-              🔄 Redirecionando para autenticação...
-            </p>
-            <p className="text-xs text-blue-600 mt-1">
-              Você será redirecionado para o Google
-            </p>
-          </div>
-        )}
-
-        {/* Debug info */}
-        {import.meta.env.DEV && (
-          <div className="mt-4 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-700">
-            <p><strong>Debug Info:</strong></p>
-            <p>API: {import.meta.env.VITE_API_URL}</p>
-            <p>Path: {window.location.pathname}</p>
-            <p>Search: {window.location.search}</p>
-          </div>
-        )}
       </div>
     </div>
   );
