@@ -22,6 +22,7 @@ class GoogleAuthRequest:
         self.picture = picture
 
 @router.get("/api/auth/google/login")
+print("Redirect URI gerado:", redirect_uri) 
 async def google_login(request: Request):
     """Redireciona para o Google OAuth ou mostra página de login"""
     try:
