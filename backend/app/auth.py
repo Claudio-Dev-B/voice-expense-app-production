@@ -1,171 +1,172 @@
-# backend/app/auth.py
-from fastapi import APIRouter, HTTPException, Depends, Request
+# backend/app/auth.py - SOLUÇÃO DEFINITIVA
+from fastapi import APIRouter, HTTPException, Depends, Request, status
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlmodel import Session, select
 import os
-from datetime import timedelta
-import urllib.parse
 import requests
-from fastapi.responses import RedirectResponse, HTMLResponse
+import json
+import logging
+from urllib.parse import urlencode
+import secrets
+from datetime import datetime, timedelta
 
 from .db import get_session
-from .security import verify_google_token, create_user_token, log_auth_attempt
+from .security import create_user_token
 from .models import User
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
+# ✅ Store temporary auth states (in production use Redis)
+auth_states = {}
 
-class GoogleAuthRequest:
-    def __init__(self, access_token: str, email: str = None, name: str = None, google_id: str = None, picture: str = None):
-        self.access_token = access_token
-        self.email = email
-        self.name = name
-        self.google_id = google_id
-        self.picture = picture
-
-
-# -------------------------
-# LOGIN COM GOOGLE
-# -------------------------
 @router.get("/api/auth/google/login")
 async def google_login(request: Request):
-    """Redireciona para o Google OAuth ou mostra página de login"""
+    """Inicia o fluxo OAuth do Google com state parameter"""
     try:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
-
+        
         if not client_id:
-            return HTMLResponse("""
-            <html>
-                <body>
-                    <h1>Google OAuth não configurado</h1>
-                    <p>Variáveis de ambiente GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET não estão configuradas.</p>
-                    <button onclick="window.close()">Fechar</button>
-                </body>
-            </html>
-            """)
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": "Google OAuth not configured"}
+            )
 
-        # Define o redirect_uri (prioriza variável de ambiente)
-        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
-        print("Redirect URI usado no login:", redirect_uri)
+        # ✅ Generate secure state parameter
+        state = secrets.token_urlsafe(32)
+        auth_states[state] = {
+            "created_at": datetime.utcnow(),
+            "used": False
+        }
 
-        # Parâmetros para o Google OAuth
-        scope = "email profile openid"
+        # ✅ Use frontend URL for redirect (CRITICAL FIX)
+        frontend_url = os.getenv("FRONTEND_URL", "https://voice-expense-app-production.vercel.app")
+        redirect_uri = f"{frontend_url}/api/auth/google/callback"
 
-        google_auth_url = (
-            f"https://accounts.google.com/o/oauth2/v2/auth?"
+        # ✅ Google OAuth URL with proper parameters
+        auth_url = (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
             f"client_id={client_id}&"
-            f"redirect_uri={urllib.parse.quote(redirect_uri)}&"
+            f"redirect_uri={requests.utils.quote(redirect_uri)}&"
             f"response_type=code&"
-            f"scope={urllib.parse.quote(scope)}&"
+            f"scope=email profile&"
+            f"state={state}&"
             f"access_type=offline&"
             f"prompt=consent"
         )
 
-        return RedirectResponse(google_auth_url)
+        logger.info(f"🔗 Redirecting to Google OAuth with state: {state}")
+        return RedirectResponse(auth_url)
 
     except Exception as e:
-        return HTMLResponse(f"""
-        <html>
-            <body>
-                <h1>Erro no login</h1>
-                <p>{str(e)}</p>
-                <button onclick="window.close()">Fechar</button>
-            </body>
-        </html>
-        """)
+        logger.error(f"❌ Google login error: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": "Authentication service unavailable"}
+        )
 
-
-# -------------------------
-# CALLBACK DO GOOGLE
-# -------------------------
 @router.get("/api/auth/google/callback")
-async def google_callback(code: str, request: Request, session: Session = Depends(get_session)):
-    """Callback do Google OAuth"""
+async def google_callback(
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    session: Session = Depends(get_session)
+):
+    """Callback do Google OAuth - SOLUÇÃO DEFINITIVA"""
     try:
+        logger.info(f"📨 Google callback received - state: {state}")
+
+        # ✅ Validate state parameter
+        if not state or state not in auth_states:
+            logger.error("❌ Invalid or missing state parameter")
+            return RedirectResponse("/auth-error?error=invalid_state")
+
+        if auth_states[state]["used"]:
+            logger.error("❌ State already used")
+            return RedirectResponse("/auth-error?error=state_reused")
+
+        # Mark state as used
+        auth_states[state]["used"] = True
+
+        # ✅ Handle OAuth errors
+        if error:
+            logger.error(f"❌ Google OAuth error: {error}")
+            return RedirectResponse(f"/auth-error?error=oauth_{error}")
+
+        if not code:
+            logger.error("❌ No authorization code received")
+            return RedirectResponse("/auth-error?error=no_code")
+
+        # ✅ Exchange code for tokens
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        frontend_url = os.getenv("FRONTEND_URL", "https://voice-expense-app-production.vercel.app")
 
         if not client_id or not client_secret:
-            return HTMLResponse("""
-            <html>
-                <body>
-                    <h1>Erro de configuração</h1>
-                    <p>Credenciais do Google não configuradas.</p>
-                    <button onclick="window.close()">Fechar</button>
-                </body>
-            </html>
-            """)
+            logger.error("❌ Google credentials not configured")
+            return RedirectResponse("/auth-error?error=misconfigured")
 
-        # Trocar o "code" por access token
-        token_url = "https://oauth2.googleapis.com/token"
-        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or str(request.url_for("google_callback"))
-        print("Redirect URI (callback) usado para token exchange:", redirect_uri)
+        # ✅ Use frontend URL as redirect_uri (MATCHING Google Cloud Console)
+        redirect_uri = f"{frontend_url}/api/auth/google/callback"
 
-        token_response = requests.post(token_url, data={
+        # Exchange code for access token
+        token_data = {
             "client_id": client_id,
             "client_secret": client_secret,
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": redirect_uri
-        })
+        }
 
-        token_data = token_response.json()
+        token_response = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data=token_data,
+            timeout=30
+        )
 
-        if "error" in token_data:
-            return HTMLResponse(f"""
-            <html>
-                <body>
-                    <h1>Erro no Google OAuth</h1>
-                    <p>{token_data['error']}</p>
-                    <button onclick="window.close()">Fechar</button>
-                </body>
-            </html>
-            """)
+        if token_response.status_code != 200:
+            error_msg = token_response.json().get('error_description', 'Token exchange failed')
+            logger.error(f"❌ Token exchange failed: {error_msg}")
+            return RedirectResponse(f"/auth-error?error=token_exchange")
 
-        access_token = token_data["access_token"]
+        token_json = token_response.json()
+        access_token = token_json["access_token"]
 
-        # Obter informações do usuário
+        # ✅ Get user info from Google
         userinfo_response = requests.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"}
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=30
         )
 
         if userinfo_response.status_code != 200:
-            return HTMLResponse("""
-            <html>
-                <body>
-                    <h1>Erro ao obter informações do usuário</h1>
-                    <p>Não foi possível obter informações do Google.</p>
-                    <button onclick="window.close()">Fechar</button>
-                </body>
-            </html>
-            """)
+            logger.error("❌ Failed to get user info from Google")
+            return RedirectResponse("/auth-error?error=user_info")
 
         userinfo = userinfo_response.json()
 
-        # Validar dados obrigatórios
+        # ✅ Validate required fields
         if not all([userinfo.get("sub"), userinfo.get("email"), userinfo.get("name")]):
-            return HTMLResponse("""
-            <html>
-                <body>
-                    <h1>Dados incompletos do Google</h1>
-                    <p>Não foi possível obter todas as informações necessárias.</p>
-                    <button onclick="window.close()">Fechar</button>
-                </body>
-            </html>
-            """)
+            logger.error("❌ Incomplete user info from Google")
+            return RedirectResponse("/auth-error?error=incomplete_info")
 
-        # Buscar ou criar usuário
-        user = session.execute(select(User).where(User.google_id == userinfo["sub"])).scalar_one_or_none()
+        # ✅ Find or create user
+        user = session.execute(
+            select(User).where(User.google_id == userinfo["sub"])
+        ).scalar_one_or_none()
 
         if not user:
-            # Buscar por email
-            user = session.execute(select(User).where(User.email == userinfo["email"])).scalar_one_or_none()
+            user = session.execute(
+                select(User).where(User.email == userinfo["email"])
+            ).scalar_one_or_none()
 
             if user:
+                # Update existing user with Google ID
                 user.google_id = userinfo["sub"]
                 if userinfo.get("picture"):
                     user.picture = userinfo["picture"]
             else:
+                # Create new user
                 user = User(
                     email=userinfo["email"],
                     name=userinfo["name"],
@@ -174,7 +175,7 @@ async def google_callback(code: str, request: Request, session: Session = Depend
                 )
                 session.add(user)
 
-        # Atualizar informações
+        # Update user information
         if user.name != userinfo["name"]:
             user.name = userinfo["name"]
 
@@ -184,125 +185,42 @@ async def google_callback(code: str, request: Request, session: Session = Depend
         session.commit()
         session.refresh(user)
 
-        # Criar JWT
+        # ✅ Create JWT token
         jwt_token = create_user_token(user)
 
-        # Enviar resultado ao front-end
-        base_url = str(request.base_url)
-        html_content = f"""
-        <html>
-            <body>
-                <script>
-                    if (window.opener && !window.opener.closed) {{
-                        window.opener.postMessage({{
-                            type: 'GOOGLE_AUTH_SUCCESS',
-                            user: {{
-                                id: {user.id},
-                                email: "{user.email}",
-                                name: "{user.name.replace('"', '&quot;')}",
-                                picture: "{user.picture or ''}",
-                                onboarding_completed: {str(user.onboarding_completed).lower()},
-                                user_type: "{user.user_type}"
-                            }},
-                            token: "{jwt_token}"
-                        }}, "{base_url}");
-                    }}
-                    window.close();
-                </script>
-                <p>Login realizado com sucesso! Você pode fechar esta janela.</p>
-                <button onclick="window.close()">Fechar</button>
-            </body>
-        </html>
-        """
-
-        return HTMLResponse(html_content)
+        # ✅ Redirect to frontend with success and token
+        success_url = f"{frontend_url}/auth-success?token={jwt_token}&user_id={user.id}"
+        
+        logger.info(f"✅ Authentication successful for user: {user.email}")
+        return RedirectResponse(success_url)
 
     except Exception as e:
-        error_message = str(e).replace('"', '&quot;')
-        error_html = f"""
-        <html>
-            <body>
-                <script>
-                    if (window.opener && !window.opener.closed) {{
-                        window.opener.postMessage({{
-                            type: 'GOOGLE_AUTH_ERROR',
-                            error: "Erro no servidor: {error_message}"
-                        }}, "*");
-                    }}
-                </script>
-                <h1>Erro no login</h1>
-                <p>{str(e)}</p>
-                <button onclick="window.close()">Fechar</button>
-            </body>
-        </html>
-        """
-        return HTMLResponse(error_html)
+        logger.error(f"💥 Critical error in Google callback: {str(e)}")
+        frontend_url = os.getenv("FRONTEND_URL", "https://voice-expense-app-production.vercel.app")
+        error_url = f"{frontend_url}/auth-error?error=server_error"
+        return RedirectResponse(error_url)
 
-
-# -------------------------
-# ENDPOINTS ADICIONAIS
-# -------------------------
-@router.post("/api/auth/google")
-async def google_auth(request: Request, auth_data: dict, session: Session = Depends(get_session)):
-    """Autenticação com Google OAuth (endpoint alternativo)"""
+@router.get("/api/auth/verify")
+async def verify_token(
+    token: str = None,
+    session: Session = Depends(get_session)
+):
+    """Verify JWT token and return user info"""
     try:
-        access_token = auth_data.get("access_token")
-        email = auth_data.get("email")
-        name = auth_data.get("name")
-        google_id = auth_data.get("google_id")
-        picture = auth_data.get("picture")
-
-        if not access_token:
-            raise HTTPException(status_code=400, detail="Access token é obrigatório")
-
-        client_ip = request.client.host if request.client else "unknown"
-
-        if os.getenv("ENVIRONMENT") == "production":
-            google_user_info = await verify_google_token(access_token)
-        else:
-            if not all([email, name, google_id]):
-                raise HTTPException(status_code=400, detail="Em desenvolvimento, email, name e google_id são obrigatórios")
-
-            google_user_info = {
-                "email": email,
-                "name": name,
-                "google_id": google_id,
-                "picture": picture
-            }
-
-        user = session.execute(select(User).where(User.google_id == google_user_info["google_id"])).scalar_one_or_none()
-
+        from .security import verify_token
+        
+        if not token:
+            raise HTTPException(status_code=400, detail="Token required")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user = session.get(User, payload.get("user_id"))
         if not user:
-            user = session.execute(select(User).where(User.email == google_user_info["email"])).scalar_one_or_none()
-
-            if user:
-                user.google_id = google_user_info["google_id"]
-                if google_user_info.get("picture"):
-                    user.picture = google_user_info["picture"]
-            else:
-                user = User(
-                    email=google_user_info["email"],
-                    name=google_user_info["name"],
-                    google_id=google_user_info["google_id"],
-                    picture=google_user_info.get("picture")
-                )
-                session.add(user)
-
-        if user.name != google_user_info["name"]:
-            user.name = google_user_info["name"]
-
-        if google_user_info.get("picture") and user.picture != google_user_info["picture"]:
-            user.picture = google_user_info["picture"]
-
-        session.commit()
-        session.refresh(user)
-
-        jwt_token = create_user_token(user)
-        log_auth_attempt(user.email, True, client_ip)
-
+            raise HTTPException(status_code=404, detail="User not found")
+        
         return {
-            "access_token": jwt_token,
-            "token_type": "bearer",
             "user": {
                 "id": user.id,
                 "email": user.email,
@@ -312,37 +230,18 @@ async def google_auth(request: Request, auth_data: dict, session: Session = Depe
                 "user_type": user.user_type
             }
         }
-
-    except HTTPException:
-        email_attempt = auth_data.get("email", "unknown")
-        client_ip = request.client.host if request.client else "unknown"
-        log_auth_attempt(email_attempt, False, client_ip)
-        raise
-
+        
     except Exception as e:
-        email_attempt = auth_data.get("email", "unknown")
-        client_ip = request.client.host if request.client else "unknown"
-        log_auth_attempt(email_attempt, False, client_ip)
-        raise HTTPException(status_code=500, detail=f"Erro durante autenticação: {str(e)}")
+        logger.error(f"Token verification error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Token verification failed")
 
-
-@router.post("/api/auth/logout")
-async def logout(request: Request, session: Session = Depends(get_session)):
-    """Logout do usuário"""
-    try:
-        client_ip = request.client.host if request.client else "unknown"
-        print(f"LOGOUT - IP: {client_ip}")
-        return {"status": "success", "message": "Logout realizado com sucesso"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro durante logout: {str(e)}")
-
-
-@router.get("/api/auth/me")
-async def get_current_user_info(session: Session = Depends(get_session), current_user: User = Depends(lambda: None)):
-    """Retorna informações do usuário atual"""
-    try:
-        if not current_user:
-            raise HTTPException(status_code=401, detail="Usuário não autenticado")
-        return {"user": current_user.dict()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao buscar informações do usuário: {str(e)}")
+# Cleanup expired states (run periodically)
+def cleanup_expired_states():
+    """Remove expired auth states"""
+    now = datetime.utcnow()
+    expired_states = [
+        state for state, data in auth_states.items()
+        if now - data["created_at"] > timedelta(minutes=10)
+    ]
+    for state in expired_states:
+        auth_states.pop(state, None)

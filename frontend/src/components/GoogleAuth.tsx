@@ -1,4 +1,4 @@
-// components/GoogleAuth.tsx - SOLUÇÃO DEFINITIVA
+// components/GoogleAuth.tsx - VERSÃO CORRIGIDA
 import React, { useState, useEffect } from 'react';
 
 interface User {
@@ -26,35 +26,50 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
       const error = urlParams.get('error');
       const user_id = urlParams.get('user_id');
 
+      console.log('🔍 Verificando parâmetros de auth:', { token, error, user_id });
+
       if (token && user_id) {
         console.log('✅ Auth redirect success detected');
-        handleAuthSuccess(token, user_id);
+        handleAuthSuccess(token);
       } else if (error) {
         console.error('❌ Auth redirect error:', error);
         onError(`Authentication failed: ${error}`);
+        
+        // Clean URL parameters
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     };
 
     handleAuthRedirect();
   }, [onSuccess, onError]);
 
-  const handleAuthSuccess = async (token: string, userId: string) => {
+  // ✅ CORREÇÃO: Removido parâmetro userId não utilizado
+  const handleAuthSuccess = async (token: string) => {
     try {
       setIsAuthenticating(true);
+      console.log('🔄 Processando token de autenticação...');
       
       const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://voice-expense-app-production-production.up.railway.app';
       
       // Verify token and get user info
+      console.log('🔐 Verificando token no backend...');
       const response = await fetch(`${API_BASE_URL}/api/auth/verify?token=${token}`);
       
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Token verification failed:', response.status, errorText);
         throw new Error('Token verification failed');
       }
 
       const data = await response.json();
+      console.log('✅ Token verificado, dados do usuário:', data.user.email);
       
       // Save token
       localStorage.setItem('access_token', token);
+      console.log('💾 Token salvo no localStorage');
+      
+      // Clean URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
       
       console.log('✅ Authentication completed successfully');
       onSuccess({
@@ -65,6 +80,9 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
     } catch (error) {
       console.error('❌ Auth success handling failed:', error);
       onError('Failed to complete authentication');
+      
+      // Clean URL parameters on error too
+      window.history.replaceState({}, document.title, window.location.pathname);
     } finally {
       setIsAuthenticating(false);
     }
@@ -72,7 +90,10 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
 
   const handleGoogleLogin = async () => {
     try {
-      if (isAuthenticating) return;
+      if (isAuthenticating) {
+        console.log('⚠️ Autenticação já em andamento');
+        return;
+      }
 
       console.log('🚀 Starting Google authentication...');
       setIsAuthenticating(true);
@@ -80,6 +101,7 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
       const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://voice-expense-app-production-production.up.railway.app';
       
       // ✅ Open auth in same tab (no popup issues)
+      console.log('🔗 Redirecionando para:', `${API_BASE_URL}/api/auth/google/login`);
       window.location.href = `${API_BASE_URL}/api/auth/google/login`;
 
     } catch (error) {
@@ -120,7 +142,7 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
           </span>
         </button>
 
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500 mb-4">
           Ao continuar, você concorda com nossos Termos de Serviço
         </p>
 
@@ -129,6 +151,19 @@ const GoogleAuth: React.FC<GoogleAuthProps> = ({ onSuccess, onError }) => {
             <p className="text-sm text-blue-700">
               🔄 Redirecionando para autenticação...
             </p>
+            <p className="text-xs text-blue-600 mt-1">
+              Você será redirecionado para o Google
+            </p>
+          </div>
+        )}
+
+        {/* Debug info */}
+        {import.meta.env.DEV && (
+          <div className="mt-4 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-700">
+            <p><strong>Debug Info:</strong></p>
+            <p>API: {import.meta.env.VITE_API_URL}</p>
+            <p>Path: {window.location.pathname}</p>
+            <p>Search: {window.location.search}</p>
           </div>
         )}
       </div>
