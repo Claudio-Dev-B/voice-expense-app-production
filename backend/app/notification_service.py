@@ -16,7 +16,7 @@ class NotificationService:
         """Cria notificação interna de convite - SEM EMAIL EXTERNO"""
         try:
             # Buscar usuário pelo email (se já existir)
-            invited_user = session.exec(
+            invited_user = session.execute(
                 select(User).where(User.email == invite_email)
             ).first()
             
@@ -86,7 +86,7 @@ class NotificationService:
     def get_pending_invites_for_user(self, user_email: str, session: Session) -> List[dict]:
         """Retorna todos os convites pendentes para um email"""
         try:
-            invites = session.exec(
+            invites = session.execute(
                 select(AccountInvite, SharedAccount, User)
                 .join(SharedAccount, AccountInvite.account_id == SharedAccount.id)
                 .join(User, AccountInvite.created_by == User.id)
@@ -119,7 +119,7 @@ class NotificationService:
     def get_shareable_invite_data(self, token: str, session: Session) -> Optional[dict]:
         """Retorna dados formatados para compartilhamento do convite"""
         try:
-            invite = session.exec(
+            invite = session.execute(
                 select(AccountInvite, SharedAccount, User)
                 .join(SharedAccount, AccountInvite.account_id == SharedAccount.id)
                 .join(User, AccountInvite.created_by == User.id)

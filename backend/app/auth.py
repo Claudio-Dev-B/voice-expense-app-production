@@ -155,11 +155,11 @@ async def google_callback(code: str, request: Request, session: Session = Depend
             """)
 
         # Buscar ou criar usuário
-        user = session.exec(select(User).where(User.google_id == userinfo["sub"])).first()
+        user = session.execute(select(User).where(User.google_id == userinfo["sub"])).scalar_one_or_none()
 
         if not user:
             # Buscar por email
-            user = session.exec(select(User).where(User.email == userinfo["email"])).first()
+            user = session.execute(select(User).where(User.email == userinfo["email"])).scalar_one_or_none()
 
             if user:
                 user.google_id = userinfo["sub"]
@@ -270,10 +270,10 @@ async def google_auth(request: Request, auth_data: dict, session: Session = Depe
                 "picture": picture
             }
 
-        user = session.exec(select(User).where(User.google_id == google_user_info["google_id"])).first()
+        user = session.execute(select(User).where(User.google_id == google_user_info["google_id"])).scalar_one_or_none()
 
         if not user:
-            user = session.exec(select(User).where(User.email == google_user_info["email"])).first()
+            user = session.execute(select(User).where(User.email == google_user_info["email"])).scalar_one_or_none()
 
             if user:
                 user.google_id = google_user_info["google_id"]

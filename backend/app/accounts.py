@@ -19,7 +19,7 @@ router = APIRouter()
 
 def check_account_access(account_id: int, user_id: int, session: Session, required_role: str = None):
     """Verifica se usuário tem acesso à conta"""
-    membership = session.exec(
+    membership = session.execute(
         select(AccountMember).where(
             AccountMember.account_id == account_id,
             AccountMember.user_id == user_id,
@@ -41,7 +41,7 @@ def check_account_access(account_id: int, user_id: int, session: Session, requir
 def get_user_accounts(user_id: int, session: Session):
     """Retorna todas as contas do usuário"""
     # Contas onde é membro
-    memberships = session.exec(
+    memberships = session.execute(
         select(AccountMember).where(
             AccountMember.user_id == user_id,
             AccountMember.is_active == True
@@ -53,7 +53,7 @@ def get_user_accounts(user_id: int, session: Session):
         account = session.get(SharedAccount, membership.account_id)
         if account and account.is_active:
             # Contar membros
-            member_count = session.exec(
+            member_count = session.execute(
                 select(AccountMember).where(
                     AccountMember.account_id == account.id,
                     AccountMember.is_active == True
@@ -61,7 +61,7 @@ def get_user_accounts(user_id: int, session: Session):
             ).all()
             
             # Buscar estatísticas de despesas
-            expenses_count = session.exec(
+            expenses_count = session.execute(
                 select(Expense).where(Expense.shared_account_id == account.id)
             ).all()
             
@@ -95,7 +95,7 @@ async def create_shared_account(
             raise HTTPException(status_code=400, detail="Nome da conta é obrigatório")
         
         # Verificar se já existe conta com mesmo nome para este usuário
-        existing_account = session.exec(
+        existing_account = session.execute(
             select(SharedAccount).where(
                 SharedAccount.owner_id == current_user["user_id"],
                 SharedAccount.name == name,
@@ -173,7 +173,7 @@ async def get_account_details(
             raise HTTPException(status_code=404, detail="Conta não encontrada")
         
         # Buscar membros
-        members = session.exec(
+        members = session.execute(
             select(AccountMember, User)
             .join(User, AccountMember.user_id == User.id)
             .where(
@@ -183,21 +183,21 @@ async def get_account_details(
         ).all()
         
         # Buscar estatísticas
-        expenses_count = session.exec(
+        expenses_count = session.execute(
             select(Expense).where(Expense.shared_account_id == account_id)
         ).all()
         
         total_expenses = sum(exp.total_amount for exp in expenses_count)
         
         # Buscar cost centers e categorias usados nesta conta
-        cost_centers_used = session.exec(
+        cost_centers_used = session.execute(
             select(CostCenter)
             .join(Expense, Expense.cost_center_id == CostCenter.id)
             .where(Expense.shared_account_id == account_id)
             .distinct()
         ).all()
         
-        categories_used = session.exec(
+        categories_used = session.execute(
             select(Category)
             .join(Expense, Expense.category_id == Category.id)
             .where(Expense.shared_account_id == account_id)
@@ -258,7 +258,7 @@ async def update_account(
                 raise HTTPException(status_code=400, detail="Nome não pode ser vazio")
             
             # Verificar se já existe outra conta com mesmo nome
-            existing_account = session.exec(
+            existing_account = session.execute(
                 select(SharedAccount).where(
                     SharedAccount.owner_id == account.owner_id,
                     SharedAccount.name == new_name,
@@ -303,7 +303,7 @@ async def delete_account(
         account.is_active = False
         
         # Marcar todos os membros como inativos
-        members = session.exec(
+        members = session.execute(
             select(AccountMember).where(AccountMember.account_id == account_id)
         ).all()
         
@@ -311,7 +311,7 @@ async def delete_account(
             member.is_active = False
         
         # Cancelar todos os convites pendentes
-        pending_invites = session.exec(
+        pending_invites = session.execute(
             select(AccountInvite).where(
                 AccountInvite.account_id == account_id,
                 AccountInvite.status == "pending"
@@ -352,7 +352,7 @@ async def update_member_role(
         if account.owner_id == member_user_id:
             raise HTTPException(status_code=400, detail="Não é possível alterar a role do proprietário")
         
-        member = session.exec(
+        member = session.execute(
             select(AccountMember).where(
                 AccountMember.account_id == account_id,
                 AccountMember.user_id == member_user_id,
@@ -399,7 +399,7 @@ async def remove_member(
         if account.owner_id == member_user_id:
             raise HTTPException(status_code=400, detail="Não é possível remover o proprietário")
         
-        member = session.exec(
+        member = session.execute(
             select(AccountMember).where(
                 AccountMember.account_id == account_id,
                 AccountMember.user_id == member_user_id,
@@ -439,7 +439,7 @@ async def leave_account(
         if account.owner_id == current_user["user_id"]:
             raise HTTPException(status_code=400, detail="Proprietário não pode sair da conta. Transfira a propriedade ou exclua a conta.")
         
-        member = session.exec(
+        member = session.execute(
             select(AccountMember).where(
                 AccountMember.account_id == account_id,
                 AccountMember.user_id == current_user["user_id"],
@@ -487,7 +487,7 @@ async def create_invite(
             raise HTTPException(status_code=400, detail="Role inválida")
         
         # Verificar se já existe convite pendente
-        existing_invite = session.exec(
+        existing_invite = session.execute(
             select(AccountInvite).where(
                 AccountInvite.account_id == account_id,
                 AccountInvite.email == email,
@@ -499,7 +499,7 @@ async def create_invite(
             raise HTTPException(status_code=400, detail="Já existe um convite pendente para este email")
         
         # Verificar se usuário já é membro
-        existing_member = session.exec(
+        existing_member = session.execute(
             select(AccountMember).where(
                 AccountMember.account_id == account_id,
                 AccountMember.user_id == User.id,
@@ -632,7 +632,7 @@ async def accept_invite(
             )
         
         # Verificar se já é membro
-        existing_member = session.exec(
+        existing_member = session.execute(
             select(AccountMember).where(
                 AccountMember.account_id == invite.account_id,
                 AccountMember.user_id == current_user["user_id"],
@@ -726,7 +726,7 @@ async def get_account_invites(
         if not check_account_access(account_id, current_user["user_id"], session, "admin"):
             raise HTTPException(status_code=403, detail="Permissão insuficiente")
         
-        invites = session.exec(
+        invites = session.execute(
             select(AccountInvite, User)
             .join(User, AccountInvite.created_by == User.id)
             .where(AccountInvite.account_id == account_id)

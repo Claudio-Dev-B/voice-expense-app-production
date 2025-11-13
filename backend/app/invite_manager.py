@@ -26,7 +26,7 @@ class InviteManager:
         """Cria um novo convite com token único"""
         try:
             # Verificar se já existe convite pendente para este email
-            existing_invite = session.exec(
+            existing_invite = session.execute(
                 select(AccountInvite).where(
                     AccountInvite.account_id == account_id,
                     AccountInvite.email == email,
@@ -45,7 +45,7 @@ class InviteManager:
                 candidate_token = self.generate_invite_token()
                 
                 # Verificar se token já existe
-                existing = session.exec(
+                existing = session.execute(
                     select(AccountInvite).where(AccountInvite.token == candidate_token)
                 ).first()
                 
@@ -82,7 +82,7 @@ class InviteManager:
     def validate_invite_token(self, token: str, session: Session) -> Dict:
         """Valida token de convite e retorna informações"""
         try:
-            result = session.exec(
+            result = session.execute(
                 select(AccountInvite, SharedAccount, User)
                 .join(SharedAccount, AccountInvite.account_id == SharedAccount.id)
                 .join(User, AccountInvite.created_by == User.id)
@@ -231,7 +231,7 @@ class InviteManager:
                 }
             
             # Verificar se usuário já é membro
-            existing_member = session.exec(
+            existing_member = session.execute(
                 select(AccountMember).where(
                     AccountMember.account_id == invite.account_id,
                     AccountMember.user_id == user_id
@@ -287,7 +287,7 @@ class InviteManager:
     def get_user_pending_invites(self, user_email: str, session: Session) -> List[Dict]:
         """Retorna todos os convites pendentes de um usuário"""
         try:
-            invites = session.exec(
+            invites = session.execute(
                 select(AccountInvite, SharedAccount, User)
                 .join(SharedAccount, AccountInvite.account_id == SharedAccount.id)
                 .join(User, AccountInvite.created_by == User.id)
@@ -343,7 +343,7 @@ class InviteManager:
     def cleanup_expired_invites(self, session: Session) -> int:
         """Limpa convites expirados e retorna quantidade removida"""
         try:
-            expired_invites = session.exec(
+            expired_invites = session.execute(
                 select(AccountInvite).where(
                     AccountInvite.status == "pending",
                     AccountInvite.expires_at < datetime.utcnow()
