@@ -21,8 +21,7 @@ class GoogleAuthRequest:
         self.google_id = google_id
         self.picture = picture
 
-@router.get("/api/auth/google/login")
-print("Redirect URI gerado:", redirect_uri) 
+@router.get("/api/auth/google/login") 
 async def google_login(request: Request):
     """Redireciona para o Google OAuth ou mostra página de login"""
     try:
@@ -39,7 +38,8 @@ async def google_login(request: Request):
                 </body>
             </html>
             """)
-        
+        redirect_uri = str(request.url_for("google_callback"))
+        print("Redirect URI gerado:", redirect_uri) 
         # Parâmetros para o Google OAuth
         redirect_uri = f"{request.base_url}api/auth/google/callback"
         scope = "email profile openid"
