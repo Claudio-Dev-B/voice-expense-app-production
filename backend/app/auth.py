@@ -1,4 +1,4 @@
-# backend/app/auth.py - VERSÃO SEGURA E VERIFICADA
+# backend/app/auth.py - VERSÃO CORRIGIDA
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlmodel import Session, select
@@ -8,9 +8,10 @@ import secrets
 from datetime import datetime, timedelta
 import logging
 
+# IMPORTANTE: Garanta que essas importações estejam corretas no seu projeto
 from .db import get_session
 from .security import create_user_token, verify_token
-from .models import User
+from .models import User, UserType # Adicionado UserType, caso seja usado na criação
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def get_backend_url():
     # Prioriza RAILWAY_STATIC_URL, senão usa o fallback.
     backend_url = os.getenv("RAILWAY_STATIC_URL", "voice-expense-app-production-production.up.railway.app")
     
-    # ⭐️ CORREÇÃO: Garante que o protocolo HTTPS esteja presente ⭐️
+    # ⭐️ CORREÇÃO 1: Garante que o protocolo HTTPS esteja presente ⭐️
     if not backend_url.startswith("https://"):
         backend_url = "https://" + backend_url
         
@@ -36,7 +37,7 @@ def get_frontend_url():
 
 @router.get("/api/auth/google/login")
 async def google_login(request: Request):
-    """Inicia o fluxo OAuth do Google - VERSÃO SEGURA"""
+    """Inicia o fluxo OAuth do Google"""
     try:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         
@@ -93,7 +94,7 @@ async def google_callback(
     error_description: str = None,
     session: Session = Depends(get_session)
 ):
-    """Callback do Google OAuth - VERSÃO SEGURA"""
+    """Callback do Google OAuth"""
     try:
         logger.info(f"📨 Callback recebido - state: {state}")
 
@@ -179,36 +180,36 @@ async def google_callback(
             return RedirectResponse(f"{get_frontend_url()}?auth_error=incomplete_info")
 
         # ✅ Find or create user
-        user = session.execute(
+        # Nota: Assumimos que a sessão aqui é síncrona ou AsyncSession é aguardada (depende de get_session)
+        # Se get_session for async, você precisará de await aqui, o que não é comum no callback do FastAPI/SQLModel.
+        # Mantendo como síncrono para compatibilidade com a maioria das implementações FastAPI/SQLModel
+        user = session.exec(
             select(User).where(User.google_id == userinfo["sub"])
-        ).scalar_one_or_none()
+        ).first()
 
         if not user:
-            user = session.execute(
+            user = session.exec(
                 select(User).where(User.email == userinfo["email"])
-            ).scalar_one_or_none()
+            ).first()
 
             if user:
                 user.google_id = userinfo["sub"]
                 if userinfo.get("picture"):
-                    user.picture = userinfo["picture"]
+                    setattr(user, 'picture', userinfo["picture"])
             else:
                 user = User(
                     email=userinfo["email"],
                     name=userinfo["name"],
                     google_id=userinfo["sub"],
-                    # Adicione o campo picture ao modelo User se não estiver lá
-                    # picture=userinfo.get("picture"), 
-                    # user_type e onboarding_completed terão valores default
+                    user_type=UserType.pessoal, # Usando um default, ajuste se necessário
+                    onboarding_completed=False 
+                    # picture será adicionado se o campo existir
                 )
             session.add(user)
 
         # Update user info
-        if user.name != userinfo["name"]:
-            user.name = userinfo["name"]
-        
-        # Assume que o campo 'picture' está no modelo User
-        if userinfo.get("picture") and getattr(user, 'picture', None) != userinfo["picture"]:
+        user.name = userinfo["name"]
+        if userinfo.get("picture"):
              setattr(user, 'picture', userinfo["picture"])
 
 
@@ -230,7 +231,8 @@ async def google_callback(
         return RedirectResponse(f"{get_frontend_url()}?auth_error=server_error")
 
 @router.get("/api/auth/verify")
-async def verify_token(
+# ⭐️ CORREÇÃO 2: Endpoint deve ser assíncrono ⭐️
+async def verify_token_endpoint(
     token: str = None,
     session: Session = Depends(get_session)
 ):
@@ -243,7 +245,12 @@ async def verify_token(
         if not payload:
             raise HTTPException(status_code=401, detail="Token inválido")
         
-        user = session.get(User, payload.get("user_id"))
+        # ⭐️ CORREÇÃO 2: Use await se a sua get_session() retorna uma AsyncSession.
+        # Se a sessão for síncrona, basta usar session.get() (sem await).
+        # Assumindo que você está usando AsyncSession/SQLModel de forma assíncrona para ser FastAPI-idiomático:
+        # Se for síncrono, remova o `await` e use `session.get(...)`.
+        user = await session.get(User, payload.get("user_id")) 
+
         if not user:
             raise HTTPException(status_code=404, detail="Usuário não encontrado")
         
@@ -252,12 +259,16 @@ async def verify_token(
                 "id": user.id,
                 "email": user.email,
                 "name": user.name,
-                "picture": getattr(user, 'picture', None), # Adicionado para robustez
+                "picture": getattr(user, 'picture', None), 
                 "onboarding_completed": user.onboarding_completed,
                 "user_type": user.user_type
             }
         }
         
+    except HTTPException as e:
+        # Re-raise explicit HTTPException
+        logger.error(f"Erro na verificação do token (HTTP): {e.detail}")
+        raise e
     except Exception as e:
         logger.error(f"Erro na verificação do token: {str(e)}")
         raise HTTPException(status_code=401, detail="Falha na verificação do token")

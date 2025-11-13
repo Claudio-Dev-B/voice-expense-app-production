@@ -5,6 +5,8 @@ from sqlalchemy.orm import sessionmaker
 from typing import Generator
 from sqlalchemy.pool import StaticPool
 import logging
+# ⭐️ Importação necessária para usar text() ⭐️
+from sqlalchemy import text 
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +43,8 @@ else:
     engine = create_engine(
         DATABASE_URL,
         echo=False,
-        pool_pre_ping=True,  # 👈 Reconecta automaticamente
-        pool_recycle=300,    # 👈 Evita conexões stale
+        pool_pre_ping=True,  # 👈 Reconecta automaticamente
+        pool_recycle=300,    # 👈 Evita conexões stale
     )
     logger.info("✅ Engine PostgreSQL criada")
 
@@ -75,7 +77,8 @@ def check_database_connection():
     """Verifica se a conexão com o banco está funcionando"""
     try:
         with Session(engine) as session:
-            session.execute("SELECT 1")
+            # ⭐️ CORREÇÃO AQUI: Usa text() para expressões SQL literais ⭐️
+            session.execute(text("SELECT 1"))
             logger.info("✅ Conexão com banco de dados estabelecida")
             return True
     except Exception as e:
