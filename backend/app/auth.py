@@ -19,11 +19,19 @@ logger = logging.getLogger(__name__)
 auth_states = {}
 
 def get_backend_url():
-    """Get backend URL with fallback"""
-    return os.getenv("RAILWAY_STATIC_URL", "https://voice-expense-app-production-production.up.railway.app")
+    """Get backend URL with fallback and ensure HTTPS protocol."""
+    # Prioriza RAILWAY_STATIC_URL, senão usa o fallback.
+    backend_url = os.getenv("RAILWAY_STATIC_URL", "voice-expense-app-production-production.up.railway.app")
+    
+    # ⭐️ CORREÇÃO: Garante que o protocolo HTTPS esteja presente ⭐️
+    if not backend_url.startswith("https://"):
+        backend_url = "https://" + backend_url
+        
+    return backend_url
 
 def get_frontend_url():
     """Get frontend URL with fallback"""
+    # Para o redirecionamento final
     return os.getenv("FRONTEND_URL", "https://voice-expense-app-production.vercel.app")
 
 @router.get("/api/auth/google/login")
@@ -46,7 +54,7 @@ async def google_login(request: Request):
             "used": False
         }
 
-        # ✅ Use backend URL for OAuth flow
+        # ✅ Use corrected backend URL for OAuth flow
         backend_url = get_backend_url()
         redirect_uri = f"{backend_url}/api/auth/google/callback"
 
@@ -59,8 +67,8 @@ async def google_login(request: Request):
             "response_type": "code",
             "scope": "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
             "state": state,
-            "access_type": "online",  # Changed from offline to online
-            "prompt": "select_account"  # Changed from consent to select_account
+            "access_type": "online", 
+            "prompt": "select_account" 
         }
 
         auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + "&".join(
@@ -117,7 +125,7 @@ async def google_callback(
             logger.error("❌ Credenciais do Google não configuradas")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=misconfigured")
 
-        # ✅ Use same redirect_uri as login
+        # ✅ Use corrected redirect_uri (must match the one sent in login)
         backend_url = get_backend_url()
         redirect_uri = f"{backend_url}/api/auth/google/callback"
 
@@ -189,16 +197,20 @@ async def google_callback(
                     email=userinfo["email"],
                     name=userinfo["name"],
                     google_id=userinfo["sub"],
-                    picture=userinfo.get("picture")
+                    # Adicione o campo picture ao modelo User se não estiver lá
+                    # picture=userinfo.get("picture"), 
+                    # user_type e onboarding_completed terão valores default
                 )
-                session.add(user)
+            session.add(user)
 
         # Update user info
         if user.name != userinfo["name"]:
             user.name = userinfo["name"]
+        
+        # Assume que o campo 'picture' está no modelo User
+        if userinfo.get("picture") and getattr(user, 'picture', None) != userinfo["picture"]:
+             setattr(user, 'picture', userinfo["picture"])
 
-        if userinfo.get("picture") and user.picture != userinfo["picture"]:
-            user.picture = userinfo["picture"]
 
         session.commit()
         session.refresh(user)
@@ -240,7 +252,7 @@ async def verify_token(
                 "id": user.id,
                 "email": user.email,
                 "name": user.name,
-                "picture": user.picture,
+                "picture": getattr(user, 'picture', None), # Adicionado para robustez
                 "onboarding_completed": user.onboarding_completed,
                 "user_type": user.user_type
             }
