@@ -10,12 +10,11 @@ import io
 import csv
 from fastapi.responses import StreamingResponse
 
-from app.models import User, Expense, CostCenter, Category, Installment, PaymentStatus, UserType
-from app.db import get_session, init_db as create_db_and_tables
+from app.models import User, Expense, CostCenter, Category, Installment, PaymentStatus, UserType, SharedAccount, AccountMember, AccountInvite
+from app.db import get_session, init_db, check_database_connection
 from app.nlu.transcribe import transcribe_and_extract
 from app.accounts import router as accounts_router
 from app.auth import router as auth_router
-from app.security import verify_token
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -40,14 +39,22 @@ app.include_router(auth_router)
 def on_startup():
     """Inicialização robusta com fallbacks"""
     try:
-        # Verificar conexão primeiro
-        from app.db import check_database_connection
-        if check_database_connection():
-            init_db()
+        logger.info("🔄 Iniciando inicialização da aplicação...")
+        
+        # Criar tabelas primeiro
+        if init_db():
+            logger.info("✅ Tabelas criadas/verificadas com sucesso")
         else:
-            logger.warning("Banco não disponível, mas app continuará rodando")
+            logger.error("❌ Falha ao criar tabelas")
+        
+        # Verificar conexão
+        if check_database_connection():
+            logger.info("✅ Conexão com banco estabelecida")
+        else:
+            logger.warning("⚠️ Banco não disponível, mas app continuará rodando")
+            
     except Exception as e:
-        logger.error(f"Erro na inicialização: {e}")
+        logger.error(f"❌ Erro na inicialização: {e}")
         # App continua rodando mesmo com erro no banco
 
 # ===== UTILITÁRIOS =====
@@ -74,7 +81,9 @@ async def create_or_update_user(user_data: dict, session: Session = Depends(get_
     """Cria ou atualiza usuário baseado no email"""
     try:
         email = user_data.get("email")
-        existing_user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        existing_user = session.execute(
+            select(User).where(User.email == email)
+        ).scalar_one_or_none()
         
         if existing_user:
             # Atualizar usuário existente
@@ -106,7 +115,9 @@ async def create_or_update_user(user_data: dict, session: Session = Depends(get_
 async def get_user_by_email(email: str, session: Session = Depends(get_session)):
     """Busca usuário por email"""
     try:
-        user = session.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        user = session.execute(
+            select(User).where(User.email == email)
+        ).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=404, detail="Usuário não encontrado")
         return user
@@ -125,15 +136,15 @@ async def get_user_info(user_id: int, session: Session = Depends(get_session)):
         # Buscar cost centers do usuário
         cost_centers = session.execute(
             select(CostCenter).where(CostCenter.user_id == user_id)
-        ).all()
+        ).scalars().all()
         
         # Buscar categorias do usuário
         categories = session.execute(
             select(Category).where(Category.user_id == user_id)
-        ).all()
+        ).scalars().all()
         
         return {
-            **user.dict(),
+            "user": user.dict(),
             "cost_centers": [cc.dict() for cc in cost_centers],
             "categories": [cat.dict() for cat in categories]
         }
@@ -168,7 +179,7 @@ async def complete_onboarding(onboarding_data: dict, session: Session = Depends(
                     CostCenter.user_id == user_id,
                     CostCenter.name == cc_name
                 )
-            ).first()
+            ).scalar_one_or_none()
             
             if not existing_cc:
                 cost_center = CostCenter(
@@ -186,7 +197,7 @@ async def complete_onboarding(onboarding_data: dict, session: Session = Depends(
                     Category.user_id == user_id,
                     Category.name == cat_name
                 )
-            ).first()
+            ).scalar_one_or_none()
             
             if not existing_cat:
                 category = Category(name=cat_name, user_id=user_id)
@@ -228,10 +239,10 @@ async def process_audio(
             
             cost_centers = session.execute(
                 select(CostCenter).where(CostCenter.user_id == user_id)
-            ).all()
+            ).scalars().all()
             categories = session.execute(
                 select(Category).where(Category.user_id == user_id)
-            ).all()
+            ).scalars().all()
             
             cost_center_names = [cc.name for cc in cost_centers]
             category_names = [cat.name for cat in categories]
@@ -267,10 +278,10 @@ async def test_audio_processing(request: dict, session: Session = Depends(get_se
             if user:
                 cost_centers = session.execute(
                     select(CostCenter).where(CostCenter.user_id == user_id)
-                ).all()
+                ).scalars().all()
                 categories = session.execute(
                     select(Category).where(Category.user_id == user_id)
-                ).all()
+                ).scalars().all()
                 
                 cost_center_names = [cc.name for cc in cost_centers]
                 category_names = [cat.name for cat in categories]
@@ -305,7 +316,7 @@ async def get_expenses(
         
         expenses = session.execute(
             query.order_by(Expense.transaction_date.desc())
-        ).all()
+        ).scalars().all()
         
         result = []
         for expense in expenses:
@@ -313,7 +324,7 @@ async def get_expenses(
             category = session.get(Category, expense.category_id)
             installments = session.execute(
                 select(Installment).where(Installment.expense_id == expense.id)
-            ).all()
+            ).scalars().all()
             
             shared_account = None
             if expense.shared_account_id:
@@ -359,7 +370,7 @@ async def create_expense(expense_data: dict, session: Session = Depends(get_sess
                     CostCenter.user_id == expense_data["user_id"],
                     CostCenter.name == cost_center_name
                 )
-            ).first()
+            ).scalar_one_or_none()
             if cost_center:
                 cost_center_id = cost_center.id
             else:
@@ -381,7 +392,7 @@ async def create_expense(expense_data: dict, session: Session = Depends(get_sess
                     Category.user_id == expense_data["user_id"], 
                     Category.name == category_name
                 )
-            ).first()
+            ).scalar_one_or_none()
             if category:
                 category_id = category.id
             else:
@@ -480,7 +491,7 @@ async def update_expense(expense_id: int, expense_data: dict, session: Session =
                     CostCenter.user_id == expense.user_id,
                     CostCenter.name == expense_data["cost_center"]
                 )
-            ).first()
+            ).scalar_one_or_none()
             if cost_center:
                 expense.cost_center_id = cost_center.id
         
@@ -490,7 +501,7 @@ async def update_expense(expense_id: int, expense_data: dict, session: Session =
                     Category.user_id == expense.user_id,
                     Category.name == expense_data["category"]
                 )
-            ).first()
+            ).scalar_one_or_none()
             if category:
                 expense.category_id = category.id
         
@@ -533,7 +544,7 @@ async def delete_expense(expense_id: int, session: Session = Depends(get_session
         # Excluir parcelas primeiro
         installments = session.execute(
             select(Installment).where(Installment.expense_id == expense_id)
-        ).all()
+        ).scalars().all()
         for installment in installments:
             session.delete(installment)
         
@@ -576,7 +587,7 @@ async def get_financial_overview(
         if shared_account_id:
             expenses_query = expenses_query.where(Expense.shared_account_id == shared_account_id)
         
-        expenses = session.execute(expenses_query).all()
+        expenses = session.execute(expenses_query).scalars().all()
         
         total_expenses = sum(exp.total_amount for exp in expenses)
         
@@ -592,7 +603,7 @@ async def get_financial_overview(
         if shared_account_id:
             cash_outflow_query = cash_outflow_query.where(Expense.shared_account_id == shared_account_id)
         
-        cash_outflow_installments = session.execute(cash_outflow_query).all()
+        cash_outflow_installments = session.execute(cash_outflow_query).scalars().all()
         
         total_cash_outflow = sum(inst.amount for inst in cash_outflow_installments)
         
@@ -613,7 +624,7 @@ async def get_financial_overview(
             if shared_account_id:
                 future_installments_query = future_installments_query.where(Expense.shared_account_id == shared_account_id)
             
-            future_installments = session.execute(future_installments_query).all()
+            future_installments = session.execute(future_installments_query).scalars().all()
             
             future_amount = sum(inst.amount for inst in future_installments)
             future_projection.append({
@@ -626,7 +637,7 @@ async def get_financial_overview(
         cost_centers_data = []
         cost_centers = session.execute(
             select(CostCenter).where(CostCenter.user_id == user_id)
-        ).all()
+        ).scalars().all()
         
         for cc in cost_centers:
             cc_expenses_query = select(Expense).where(
@@ -640,7 +651,7 @@ async def get_financial_overview(
             if shared_account_id:
                 cc_expenses_query = cc_expenses_query.where(Expense.shared_account_id == shared_account_id)
             
-            cc_expenses = session.execute(cc_expenses_query).all()
+            cc_expenses = session.execute(cc_expenses_query).scalars().all()
             
             cc_total = sum(exp.total_amount for exp in cc_expenses)
             if cc_total > 0:
@@ -694,7 +705,7 @@ async def get_cost_center_detail(
                 CostCenter.user_id == user_id,
                 CostCenter.name == cost_center_name
             )
-        ).first()
+        ).scalar_one_or_none()
         
         if not cost_center:
             raise HTTPException(status_code=404, detail="Centro de custo não encontrado")
@@ -906,7 +917,7 @@ async def get_recent_expenses(user_id: int, session: Session = Depends(get_sessi
             .where(Expense.user_id == user_id)
             .order_by(Expense.transaction_date.desc())
             .limit(5)
-        ).all()
+        ).scalars().all()
         
         result = []
         for expense in expenses:
