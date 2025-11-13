@@ -43,8 +43,8 @@ else:
     engine = create_engine(
         DATABASE_URL,
         echo=False,
-        pool_pre_ping=True,  # 👈 Reconecta automaticamente
-        pool_recycle=300,    # 👈 Evita conexões stale
+        pool_pre_ping=True, # Reconecta automaticamente
+        pool_recycle=300, # Evita conexões stale
     )
     logger.info("✅ Engine PostgreSQL criada")
 
@@ -77,7 +77,7 @@ def check_database_connection():
     """Verifica se a conexão com o banco está funcionando"""
     try:
         with Session(engine) as session:
-            # ⭐️ CORREÇÃO AQUI: Usa text() para expressões SQL literais ⭐️
+            # CORREÇÃO AQUI: Usa text() para expressões SQL literais 
             session.execute(text("SELECT 1"))
             logger.info("✅ Conexão com banco de dados estabelecida")
             return True
