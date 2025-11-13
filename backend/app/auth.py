@@ -182,6 +182,8 @@ async def google_callback(code: str, request: Request, session: Session = Depend
         jwt_token = create_user_token(user)
         
         # HTML que envia mensagem para o window opener e fecha
+        # CORREÇÃO: Remover f-strings complexas com backslashes
+        base_url = str(request.base_url)
         html_content = f"""
         <html>
             <body>
@@ -192,13 +194,13 @@ async def google_callback(code: str, request: Request, session: Session = Depend
                             user: {{
                                 id: {user.id},
                                 email: "{user.email}",
-                                name: "{user.name.replace('"', '\\"')}",
+                                name: "{user.name.replace('"', '&quot;')}",
                                 picture: "{user.picture or ''}",
                                 onboarding_completed: {str(user.onboarding_completed).lower()},
                                 user_type: "{user.user_type}"
                             }},
                             token: "{jwt_token}"
-                        }}, "{str(request.base_url)}");
+                        }}, "{base_url}");
                     }}
                     window.close();
                 </script>
@@ -211,6 +213,7 @@ async def google_callback(code: str, request: Request, session: Session = Depend
         return HTMLResponse(html_content)
         
     except Exception as e:
+        error_message = str(e).replace('"', '&quot;')
         error_html = f"""
         <html>
             <body>
@@ -218,7 +221,7 @@ async def google_callback(code: str, request: Request, session: Session = Depend
                     if (window.opener && !window.opener.closed) {{
                         window.opener.postMessage({{
                             type: 'GOOGLE_AUTH_ERROR',
-                            error: "Erro no servidor: {str(e).replace('"', '\\"')}"
+                            error: "Erro no servidor: {error_message}"
                         }}, "*");
                     }}
                 </script>
@@ -383,26 +386,52 @@ async def logout(
             detail=f"Erro durante logout: {str(e)}"
         )
 
+# Função auxiliar para obter usuário atual (usada em outras partes do sistema)
+def get_current_user(session: Session = Depends(get_session), token: str = None):
+    """Obtém o objeto User completo baseado no token"""
+    from .security import verify_token, get_current_user_from_token
+    
+    if token is None:
+        # Para uso com Depends do FastAPI
+        from fastapi import Depends
+        from .security import verify_token_from_header
+        
+        async def dependency(
+            sess: Session = Depends(get_session), 
+            token_str: str = Depends(verify_token_from_header)
+        ):
+            user = get_current_user_from_token(token_str, sess)
+            if not user:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+            return user
+        
+        return Depends(dependency)
+    else:
+        # Para uso direto
+        user = get_current_user_from_token(token, session)
+        if not user:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="Token inválido ou expirado")
+        return user
+
+# Funções de compatibilidade para manter o código existente
 @router.get("/api/auth/me")
 async def get_current_user_info(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(lambda: get_current_user(session))
+    current_user: User = Depends(get_current_user)
 ):
     """Retorna informações do usuário atual"""
     try:
-        user = session.get(User, current_user.id)
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuário não encontrado")
-        
         return {
             "user": {
-                "id": user.id,
-                "email": user.email,
-                "name": user.name,
-                "picture": user.picture,
-                "onboarding_completed": user.onboarding_completed,
-                "user_type": user.user_type,
-                "created_at": user.created_at
+                "id": current_user.id,
+                "email": current_user.email,
+                "name": current_user.name,
+                "picture": current_user.picture,
+                "onboarding_completed": current_user.onboarding_completed,
+                "user_type": current_user.user_type,
+                "created_at": current_user.created_at
             }
         }
         
@@ -415,20 +444,16 @@ async def get_current_user_info(
 @router.post("/api/auth/validate")
 async def validate_token(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(lambda: get_current_user(session))
+    current_user: User = Depends(get_current_user)
 ):
     """Valida se o token JWT é válido"""
     try:
-        user = session.get(User, current_user.id)
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuário não encontrado")
-        
         return {
             "valid": True,
             "user": {
-                "id": user.id,
-                "email": user.email,
-                "name": user.name
+                "id": current_user.id,
+                "email": current_user.email,
+                "name": current_user.name
             }
         }
         
@@ -437,14 +462,3 @@ async def validate_token(
             status_code=401,
             detail="Token inválido"
         )
-
-# Função auxiliar para obter usuário atual (usada em outras partes do sistema)
-def get_current_user(
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(verify_token)
-):
-    """Obtém o objeto User completo baseado no token"""
-    user = session.get(User, current_user["user_id"])
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    return user
