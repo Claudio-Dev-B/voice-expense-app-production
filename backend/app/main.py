@@ -33,7 +33,7 @@ app.add_middleware(
 
 # Incluir routers
 app.include_router(accounts_router)
-app.include_router(auth_router)
+app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
 
 @app.on_event("startup")
 def on_startup():
