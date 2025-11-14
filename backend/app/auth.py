@@ -1,4 +1,4 @@
-# backend/app/auth.py - VERSÃO CORRIGIDA
+# backend/app/auth.py - VERSÃO CORRIGIDA FINAL
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlmodel import Session, select
@@ -11,7 +11,7 @@ import logging
 # IMPORTANTE: Garanta que essas importações estejam corretas no seu projeto
 from .db import get_session
 from .security import create_user_token, verify_token
-from .models import User, UserType # Adicionado UserType, caso seja usado na criação
+from .models import User, UserType 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ def get_backend_url():
     # Prioriza RAILWAY_STATIC_URL, senão usa o fallback.
     backend_url = os.getenv("RAILWAY_STATIC_URL", "voice-expense-app-production-production.up.railway.app")
     
-    # ⭐️ CORREÇÃO 1: Garante que o protocolo HTTPS esteja presente ⭐️
+    # Garante que o protocolo HTTPS esteja presente
     if not backend_url.startswith("https://"):
         backend_url = "https://" + backend_url
         
@@ -32,36 +32,38 @@ def get_backend_url():
 
 def get_frontend_url():
     """Get frontend URL with fallback"""
-    # Para o redirecionamento final
+    # Para o redirecionamento final (Vercel)
     return os.getenv("FRONTEND_URL", "https://voice-expense-app-production.vercel.app")
 
-@router.get("/api/auth/google/login")
+# CORRIGIDO: Rota alterada para /google/login
+@router.get("/google/login")
 async def google_login(request: Request):
     """Inicia o fluxo OAuth do Google"""
     try:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         
         if not client_id:
-            logger.error("❌ GOOGLE_CLIENT_ID não configurado")
+            logger.error("GOOGLE_CLIENT_ID não configurado")
             return JSONResponse(
                 status_code=500,
                 content={"error": "Google OAuth não configurado"}
             )
 
-        # ✅ Generate secure state
+        # Generate secure state
         state = secrets.token_urlsafe(32)
         auth_states[state] = {
             "created_at": datetime.utcnow(),
             "used": False
         }
 
-        # ✅ Use corrected backend URL for OAuth flow
+        # Use corrected backend URL for OAuth flow
         backend_url = get_backend_url()
-        redirect_uri = f"{backend_url}/api/auth/google/callback"
+        # O redirect_uri AINDA PRECISA do prefixo /api/auth porque o Google o usa.
+        redirect_uri = f"{backend_url}/api/auth/google/callback" 
 
-        logger.info(f"🔗 Iniciando OAuth com redirect_uri: {redirect_uri}")
+        logger.info(f"Iniciando OAuth com redirect_uri: {redirect_uri}")
 
-        # ✅ Google OAuth URL with minimal, safe parameters
+        # Google OAuth URL with minimal, safe parameters
         auth_params = {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -76,17 +78,18 @@ async def google_login(request: Request):
             [f"{k}={requests.utils.quote(v)}" for k, v in auth_params.items()]
         )
 
-        logger.info("🚀 Redirecionando para Google OAuth")
+        logger.info("Redirecionando para Google OAuth")
         return RedirectResponse(auth_url)
 
     except Exception as e:
-        logger.error(f"💥 Erro no login Google: {str(e)}")
+        logger.error(f"Erro no login Google: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"error": "Serviço de autenticação indisponível"}
         )
 
-@router.get("/api/auth/google/callback")
+# CORRIGIDO: Rota alterada para /google/callback
+@router.get("/google/callback")
 async def google_callback(
     code: str = None,
     state: str = None,
@@ -96,43 +99,43 @@ async def google_callback(
 ):
     """Callback do Google OAuth"""
     try:
-        logger.info(f"📨 Callback recebido - state: {state}")
+        logger.info(f"Callback recebido - state: {state}")
 
-        # ✅ Validate state
+        # Validate state
         if not state or state not in auth_states:
-            logger.error("❌ State inválido ou ausente")
+            logger.error("State inválido ou ausente")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=invalid_state")
 
         if auth_states[state]["used"]:
-            logger.error("❌ State já utilizado")
+            logger.error("State já utilizado")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=state_reused")
 
         auth_states[state]["used"] = True
 
-        # ✅ Handle Google errors
+        # Handle Google errors
         if error:
-            logger.error(f"❌ Erro do Google: {error} - {error_description}")
+            logger.error(f"Erro do Google: {error} - {error_description}")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=google_{error}")
 
         if not code:
-            logger.error("❌ Código de autorização não recebido")
+            logger.error("Código de autorização não recebido")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=no_code")
 
-        # ✅ Get credentials
+        # Get credentials
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
 
         if not client_id or not client_secret:
-            logger.error("❌ Credenciais do Google não configuradas")
+            logger.error("Credenciais do Google não configuradas")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=misconfigured")
 
-        # ✅ Use corrected redirect_uri (must match the one sent in login)
+        # Use corrected redirect_uri (must match the one sent in login)
         backend_url = get_backend_url()
         redirect_uri = f"{backend_url}/api/auth/google/callback"
 
-        logger.info("🔄 Trocando código por token...")
+        logger.info("Trocando código por token...")
 
-        # ✅ Exchange code for token
+        # Exchange code for token
         token_response = requests.post(
             "https://oauth2.googleapis.com/token",
             data={
@@ -149,19 +152,19 @@ async def google_callback(
         if token_response.status_code != 200:
             error_data = token_response.json()
             error_msg = error_data.get('error_description', 'Falha na troca de token')
-            logger.error(f"❌ Falha na troca de token: {error_msg}")
+            logger.error(f"Falha na troca de token: {error_msg}")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=token_failed")
 
         token_data = token_response.json()
         access_token = token_data.get("access_token")
 
         if not access_token:
-            logger.error("❌ Access token não recebido")
+            logger.error("Access token não recebido")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=no_token")
 
-        logger.info("✅ Access token obtido")
+        logger.info("Access token obtido")
 
-        # ✅ Get user info
+        # Get user info
         userinfo_response = requests.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
             headers={"Authorization": f"Bearer {access_token}"},
@@ -169,20 +172,17 @@ async def google_callback(
         )
 
         if userinfo_response.status_code != 200:
-            logger.error("❌ Falha ao obter informações do usuário")
+            logger.error("Falha ao obter informações do usuário")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=user_info")
 
         userinfo = userinfo_response.json()
 
-        # ✅ Validate required fields
+        # Validate required fields
         if not all([userinfo.get("sub"), userinfo.get("email"), userinfo.get("name")]):
-            logger.error("❌ Informações do usuário incompletas")
+            logger.error("Informações do usuário incompletas")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=incomplete_info")
 
-        # ✅ Find or create user
-        # Nota: Assumimos que a sessão aqui é síncrona ou AsyncSession é aguardada (depende de get_session)
-        # Se get_session for async, você precisará de await aqui, o que não é comum no callback do FastAPI/SQLModel.
-        # Mantendo como síncrono para compatibilidade com a maioria das implementações FastAPI/SQLModel
+        # Find or create user
         user = session.exec(
             select(User).where(User.google_id == userinfo["sub"])
         ).first()
@@ -201,37 +201,36 @@ async def google_callback(
                     email=userinfo["email"],
                     name=userinfo["name"],
                     google_id=userinfo["sub"],
-                    user_type=UserType.pessoal, # Usando um default, ajuste se necessário
+                    user_type=UserType.pessoal,
                     onboarding_completed=False 
-                    # picture será adicionado se o campo existir
                 )
             session.add(user)
 
         # Update user info
         user.name = userinfo["name"]
         if userinfo.get("picture"):
-             setattr(user, 'picture', userinfo["picture"])
+            setattr(user, 'picture', userinfo["picture"])
 
 
         session.commit()
         session.refresh(user)
 
-        # ✅ Create JWT token
+        # Create JWT token
         jwt_token = create_user_token(user)
 
-        # ✅ Redirect to frontend with token
+        # Redirect to frontend with token
         frontend_url = get_frontend_url()
         success_url = f"{frontend_url}?auth_success=true&token={jwt_token}&user_id={user.id}"
         
-        logger.info(f"✅ Autenticação bem-sucedida para: {user.email}")
+        logger.info(f"Autenticação bem-sucedida para: {user.email}")
         return RedirectResponse(success_url)
 
     except Exception as e:
-        logger.error(f"💥 Erro crítico no callback: {str(e)}")
+        logger.error(f"Erro crítico no callback: {str(e)}")
         return RedirectResponse(f"{get_frontend_url()}?auth_error=server_error")
 
-@router.get("/api/auth/verify")
-# ⭐️ CORREÇÃO 2: Endpoint deve ser assíncrono ⭐️
+# CORRIGIDO: Rota alterada para /verify
+@router.get("/verify")
 async def verify_token_endpoint(
     token: str = None,
     session: Session = Depends(get_session)
@@ -245,11 +244,8 @@ async def verify_token_endpoint(
         if not payload:
             raise HTTPException(status_code=401, detail="Token inválido")
         
-        # ⭐️ CORREÇÃO 2: Use await se a sua get_session() retorna uma AsyncSession.
-        # Se a sessão for síncrona, basta usar session.get() (sem await).
-        # Assumindo que você está usando AsyncSession/SQLModel de forma assíncrona para ser FastAPI-idiomático:
-        # Se for síncrono, remova o `await` e use `session.get(...)`.
-        user = await session.get(User, payload.get("user_id")) 
+        # Usando session.get() para síncrono, conforme a maioria das implementações FastAPI/SQLModel
+        user = session.get(User, payload.get("user_id")) 
 
         if not user:
             raise HTTPException(status_code=404, detail="Usuário não encontrado")
