@@ -1,5 +1,5 @@
-# backend/app/auth.py - VERSÃO CORRIGIDA FINAL
-from fastapi import APIRouter, HTTPException, Depends, Request, status
+# backend/app/auth.py - VERSÃO CORRIGIDA FINAL (SÍNCRONA)
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlmodel import Session, select
 import os
@@ -7,6 +7,9 @@ import requests
 import secrets
 from datetime import datetime, timedelta
 import logging
+
+# Importação extra necessária para a execução síncrona robusta (SQLAlchemy 2.0 style)
+from sqlalchemy.future import select as select_sa 
 
 # IMPORTANTE: Garanta que essas importações estejam corretas no seu projeto
 from .db import get_session
@@ -21,10 +24,8 @@ auth_states = {}
 
 def get_backend_url():
     """Get backend URL with fallback and ensure HTTPS protocol."""
-    # Prioriza RAILWAY_STATIC_URL, senão usa o fallback.
     backend_url = os.getenv("RAILWAY_STATIC_URL", "voice-expense-app-production-production.up.railway.app")
     
-    # Garante que o protocolo HTTPS esteja presente
     if not backend_url.startswith("https://"):
         backend_url = "https://" + backend_url
         
@@ -32,10 +33,8 @@ def get_backend_url():
 
 def get_frontend_url():
     """Get frontend URL with fallback"""
-    # Para o redirecionamento final (Vercel)
     return os.getenv("FRONTEND_URL", "https://voice-expense-app-production.vercel.app")
 
-# CORRIGIDO: Rota alterada para /google/login
 @router.get("/google/login")
 async def google_login(request: Request):
     """Inicia o fluxo OAuth do Google"""
@@ -58,7 +57,6 @@ async def google_login(request: Request):
 
         # Use corrected backend URL for OAuth flow
         backend_url = get_backend_url()
-        # O redirect_uri AINDA PRECISA do prefixo /api/auth porque o Google o usa.
         redirect_uri = f"{backend_url}/api/auth/google/callback" 
 
         logger.info(f"Iniciando OAuth com redirect_uri: {redirect_uri}")
@@ -88,7 +86,6 @@ async def google_login(request: Request):
             content={"error": "Serviço de autenticação indisponível"}
         )
 
-# CORRIGIDO: Rota alterada para /google/callback
 @router.get("/google/callback")
 async def google_callback(
     code: str = None,
@@ -182,21 +179,27 @@ async def google_callback(
             logger.error("Informações do usuário incompletas")
             return RedirectResponse(f"{get_frontend_url()}?auth_error=incomplete_info")
 
+        # ✅ CORREÇÃO: Usando session.execute() para consulta síncrona
         # Find or create user
-        user = session.exec(
+        
+        # 1. Tentar encontrar pelo Google ID
+        user = session.execute(
             select(User).where(User.google_id == userinfo["sub"])
-        ).first()
+        ).scalar_one_or_none()
 
         if not user:
-            user = session.exec(
+            # 2. Se não encontrar, tentar encontrar pelo email
+            user = session.execute(
                 select(User).where(User.email == userinfo["email"])
-            ).first()
+            ).scalar_one_or_none()
 
             if user:
+                # Atualizar Google ID em usuário existente
                 user.google_id = userinfo["sub"]
                 if userinfo.get("picture"):
                     setattr(user, 'picture', userinfo["picture"])
             else:
+                # Criar novo usuário
                 user = User(
                     email=userinfo["email"],
                     name=userinfo["name"],
@@ -206,7 +209,7 @@ async def google_callback(
                 )
             session.add(user)
 
-        # Update user info
+        # Update user info (nome e foto)
         user.name = userinfo["name"]
         if userinfo.get("picture"):
             setattr(user, 'picture', userinfo["picture"])
@@ -227,9 +230,9 @@ async def google_callback(
 
     except Exception as e:
         logger.error(f"Erro crítico no callback: {str(e)}")
+        # Em caso de erro, você está redirecionando para o frontend com um parâmetro de erro.
         return RedirectResponse(f"{get_frontend_url()}?auth_error=server_error")
 
-# CORRIGIDO: Rota alterada para /verify
 @router.get("/verify")
 async def verify_token_endpoint(
     token: str = None,
@@ -244,7 +247,7 @@ async def verify_token_endpoint(
         if not payload:
             raise HTTPException(status_code=401, detail="Token inválido")
         
-        # Usando session.get() para síncrono, conforme a maioria das implementações FastAPI/SQLModel
+        # session.get() é o método síncrono e correto para busca por PK
         user = session.get(User, payload.get("user_id")) 
 
         if not user:
@@ -262,7 +265,6 @@ async def verify_token_endpoint(
         }
         
     except HTTPException as e:
-        # Re-raise explicit HTTPException
         logger.error(f"Erro na verificação do token (HTTP): {e.detail}")
         raise e
     except Exception as e:
