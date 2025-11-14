@@ -204,7 +204,7 @@ async def google_callback(
                     email=userinfo["email"],
                     name=userinfo["name"],
                     google_id=userinfo["sub"],
-                    user_type=UserType.PERSSONAL,
+                    user_type=UserType.PERSONAL,
                     onboarding_completed=False 
                 )
             session.add(user)
